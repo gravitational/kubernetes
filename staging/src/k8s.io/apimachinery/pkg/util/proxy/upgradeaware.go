@@ -273,7 +273,7 @@ func (h *UpgradeAwareHandler) tryUpgrade(w http.ResponseWriter, req *http.Reques
 	// determine the http response code from the backend by reading from rawResponse+backendConn
 	rawResponseCode, headerBytes, err := getResponseCode(io.MultiReader(bytes.NewReader(rawResponse), backendConn))
 	if err != nil {
-		klog.V(6).Infof("Proxy connection error: %v", err)
+		glog.V(6).Infof("Proxy connection error: %v", err)
 		h.Responder.Error(w, req, err)
 		return true
 	}
@@ -308,10 +308,10 @@ func (h *UpgradeAwareHandler) tryUpgrade(w http.ResponseWriter, req *http.Reques
 
 	if rawResponseCode != http.StatusSwitchingProtocols {
 		// If the backend did not upgrade the request, finish echoing the response from the backend to the client and return, closing the connection.
-		klog.V(6).Infof("Proxy upgrade error, status code %d", rawResponseCode)
+		glog.V(6).Infof("Proxy upgrade error, status code %d", rawResponseCode)
 		_, err := io.Copy(requestHijackedConn, backendConn)
 		if err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
-			klog.Errorf("Error proxying data from backend to client: %v", err)
+			glog.Errorf("Error proxying data from backend to client: %v", err)
 		}
 		// Indicate we handled the request
 		return true
