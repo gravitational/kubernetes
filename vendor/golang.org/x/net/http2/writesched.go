@@ -76,6 +76,10 @@ func (wr FrameWriteRequest) StreamID() uint32 {
 	return wr.stream.id
 }
 
+func (wr FrameWriteRequest) isControl() bool {
+	return wr.stream == nil
+}
+
 // DataSize returns the number of flow control bytes that must be consumed
 // to write this entire frame. This is 0 for non-DATA frames.
 func (wr FrameWriteRequest) DataSize() int {
