@@ -234,6 +234,7 @@ func NewCacherFromConfig(config Config) *Cacher {
 	cacher.stopWg.Add(1)
 	go func() {
 		defer cacher.stopWg.Done()
+		defer cacher.terminateAllWatchers()
 		wait.Until(
 			func() {
 				if !cacher.isStopped() {
@@ -333,6 +334,13 @@ func (c *Cacher) Watch(ctx context.Context, key string, resourceVersion string, 
 		// TODO: We should tune this value and ideally make it dependent on the
 		// number of objects of a given type and/or their churn.
 		chanSize = 1000
+	}
+
+	// With some events already sent, update resourceVersion so that
+	// events that were buffered and not yet processed won't be delivered
+	// to this watcher second time causing going back in time.
+	if len(initEvents) > 0 {
+		watchRV = initEvents[len(initEvents)-1].ResourceVersion
 	}
 
 	c.Lock()

@@ -2479,6 +2479,49 @@ func TestDeleteNoDaemonPod(t *testing.T) {
 	}
 }
 
+func TestDeleteUnscheduledPodForNotExistingNode(t *testing.T) {
+	for _, f := range []bool{true, false} {
+		defer utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ScheduleDaemonSetPods, f)()
+		for _, strategy := range updateStrategies() {
+			ds := newDaemonSet("foo")
+			ds.Spec.UpdateStrategy = *strategy
+			manager, podControl, _, err := newTestController(ds)
+			if err != nil {
+				t.Fatalf("error creating DaemonSets controller: %v", err)
+			}
+			manager.dsStore.Add(ds)
+			addNodes(manager.nodeStore, 0, 1, nil)
+			addPods(manager.podStore, "node-0", simpleDaemonSetLabel, ds, 1)
+			addPods(manager.podStore, "node-1", simpleDaemonSetLabel, ds, 1)
+
+			podScheduledUsingAffinity := newPod("pod1-node-3", "", simpleDaemonSetLabel, ds)
+			podScheduledUsingAffinity.Spec.Affinity = &v1.Affinity{
+				NodeAffinity: &v1.NodeAffinity{
+					RequiredDuringSchedulingIgnoredDuringExecution: &v1.NodeSelector{
+						NodeSelectorTerms: []v1.NodeSelectorTerm{
+							{
+								MatchFields: []v1.NodeSelectorRequirement{
+									{
+										Key:      schedulerapi.NodeFieldSelectorKeyNodeName,
+										Operator: v1.NodeSelectorOpIn,
+										Values:   []string{"node-2"},
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+			manager.podStore.Add(podScheduledUsingAffinity)
+			if f {
+				syncAndValidateDaemonSets(t, manager, ds, podControl, 0, 1, 0)
+			} else {
+				syncAndValidateDaemonSets(t, manager, ds, podControl, 0, 0, 0)
+			}
+		}
+	}
+}
+
 func TestGetNodesToDaemonPods(t *testing.T) {
 	for _, f := range []bool{true, false} {
 		defer utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ScheduleDaemonSetPods, f)()

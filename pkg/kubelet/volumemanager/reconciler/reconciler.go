@@ -341,7 +341,7 @@ func (rc *reconciler) StatesHasBeenSynced() bool {
 type podVolume struct {
 	podName        volumetypes.UniquePodName
 	volumeSpecName string
-	mountPath      string
+	volumePath     string
 	pluginName     string
 	volumeMode     v1.PersistentVolumeMode
 }
@@ -455,6 +455,10 @@ func (rc *reconciler) reconstructVolume(volume podVolume) (*reconstructedVolume,
 	if err != nil {
 		return nil, err
 	}
+	deviceMountablePlugin, err := rc.volumePluginMgr.FindDeviceMountablePluginByName(volume.pluginName)
+	if err != nil {
+		return nil, err
+	}
 
 	// Create pod object
 	pod := &v1.Pod{
@@ -473,29 +477,20 @@ func (rc *reconciler) reconstructVolume(volume podVolume) (*reconstructedVolume,
 		pod.UID,
 		volume.podName,
 		volume.volumeSpecName,
-		volume.mountPath,
+		volume.volumePath,
 		volume.pluginName)
 	if err != nil {
 		return nil, err
 	}
 
 	var uniqueVolumeName v1.UniqueVolumeName
-	if attachablePlugin != nil {
+	if attachablePlugin != nil || deviceMountablePlugin != nil {
 		uniqueVolumeName, err = util.GetUniqueVolumeNameFromSpec(plugin, volumeSpec)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		uniqueVolumeName = util.GetUniqueVolumeNameForNonAttachableVolume(volume.podName, plugin, volumeSpec)
-	}
-	// Check existence of mount point for filesystem volume or symbolic link for block volume
-	isExist, checkErr := rc.operationExecutor.CheckVolumeExistenceOperation(volumeSpec, volume.mountPath, volumeSpec.Name(), rc.mounter, uniqueVolumeName, volume.podName, pod.UID, attachablePlugin)
-	if checkErr != nil {
-		return nil, checkErr
-	}
-	// If mount or symlink doesn't exist, volume reconstruction should be failed
-	if !isExist {
-		return nil, fmt.Errorf("Volume: %q is not mounted", uniqueVolumeName)
+		uniqueVolumeName = util.GetUniqueVolumeNameFromSpecWithPod(volume.podName, plugin, volumeSpec)
 	}
 
 	volumeMounter, newMounterErr := plugin.NewMounter(
@@ -510,6 +505,16 @@ func (rc *reconciler) reconstructVolume(volume podVolume) (*reconstructedVolume,
 			volume.podName,
 			pod.UID,
 			newMounterErr)
+	}
+
+	// Check existence of mount point for filesystem volume or symbolic link for block volume
+	isExist, checkErr := rc.operationExecutor.CheckVolumeExistenceOperation(volumeSpec, volumeMounter.GetPath(), volumeSpec.Name(), rc.mounter, uniqueVolumeName, volume.podName, pod.UID, attachablePlugin)
+	if checkErr != nil {
+		return nil, checkErr
+	}
+	// If mount or symlink doesn't exist, volume reconstruction should be failed
+	if !isExist {
+		return nil, fmt.Errorf("Volume: %q is not mounted", uniqueVolumeName)
 	}
 
 	// TODO: remove feature gate check after no longer needed
@@ -676,12 +681,12 @@ func getVolumesFromPodDir(podDir string) ([]podVolume, error) {
 				}
 				unescapePluginName := utilstrings.UnescapeQualifiedNameForDisk(pluginName)
 				for _, volumeName := range volumePluginDirs {
-					mountPath := path.Join(volumePluginPath, volumeName)
-					klog.V(5).Infof("podName: %v, mount path from volume plugin directory: %v, ", podName, mountPath)
+					volumePath := path.Join(volumePluginPath, volumeName)
+					klog.V(5).Infof("podName: %v, volume path from volume plugin directory: %v, ", podName, volumePath)
 					volumes = append(volumes, podVolume{
 						podName:        volumetypes.UniquePodName(podName),
 						volumeSpecName: volumeName,
-						mountPath:      mountPath,
+						volumePath:     volumePath,
 						pluginName:     unescapePluginName,
 						volumeMode:     volumeMode,
 					})

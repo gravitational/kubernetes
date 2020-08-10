@@ -37,8 +37,8 @@ import (
 )
 
 type csiBlockMapper struct {
+	csiClientGetter
 	k8s        kubernetes.Interface
-	csiClient  csiClient
 	plugin     *csiPlugin
 	driverName csiDriverName
 	specName   string
@@ -134,7 +134,8 @@ func (m *csiBlockMapper) stageVolumeForBlock(
 		fsTypeBlockName,
 		accessMode,
 		nodeStageSecrets,
-		csiSource.VolumeAttributes)
+		csiSource.VolumeAttributes,
+		nil /* MountOptions */)
 
 	if err != nil {
 		klog.Error(log("blockMapper.stageVolumeForBlock failed: %v", err))
@@ -247,14 +248,20 @@ func (m *csiBlockMapper) SetUpDevice() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), csiTimeout)
 	defer cancel()
 
+	csiClient, err := m.csiClientGetter.Get()
+	if err != nil {
+		klog.Error(log("blockMapper.SetUpDevice failed to get CSI client: %v", err))
+		return "", err
+	}
+
 	// Call NodeStageVolume
-	stagingPath, err := m.stageVolumeForBlock(ctx, m.csiClient, accessMode, csiSource, attachment)
+	stagingPath, err := m.stageVolumeForBlock(ctx, csiClient, accessMode, csiSource, attachment)
 	if err != nil {
 		return "", err
 	}
 
 	// Call NodePublishVolume
-	publishPath, err := m.publishVolumeForBlock(ctx, m.csiClient, accessMode, csiSource, attachment, stagingPath)
+	publishPath, err := m.publishVolumeForBlock(ctx, csiClient, accessMode, csiSource, attachment, stagingPath)
 	if err != nil {
 		return "", err
 	}
@@ -326,6 +333,12 @@ func (m *csiBlockMapper) TearDownDevice(globalMapPath, devicePath string) error 
 	ctx, cancel := context.WithTimeout(context.Background(), csiTimeout)
 	defer cancel()
 
+	csiClient, err := m.csiClientGetter.Get()
+	if err != nil {
+		klog.Error(log("blockMapper.TearDownDevice failed to get CSI client: %v", err))
+		return err
+	}
+
 	// Call NodeUnpublishVolume
 	publishPath := m.getPublishPath()
 	if _, err := os.Stat(publishPath); err != nil {
@@ -335,7 +348,7 @@ func (m *csiBlockMapper) TearDownDevice(globalMapPath, devicePath string) error 
 			return err
 		}
 	} else {
-		err := m.unpublishVolumeForBlock(ctx, m.csiClient, publishPath)
+		err := m.unpublishVolumeForBlock(ctx, csiClient, publishPath)
 		if err != nil {
 			return err
 		}
@@ -350,7 +363,7 @@ func (m *csiBlockMapper) TearDownDevice(globalMapPath, devicePath string) error 
 			return err
 		}
 	} else {
-		err := m.unstageVolumeForBlock(ctx, m.csiClient, stagingPath)
+		err := m.unstageVolumeForBlock(ctx, csiClient, stagingPath)
 		if err != nil {
 			return err
 		}

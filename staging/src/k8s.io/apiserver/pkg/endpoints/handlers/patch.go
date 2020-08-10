@@ -47,6 +47,11 @@ import (
 	utiltrace "k8s.io/apiserver/pkg/util/trace"
 )
 
+const (
+	// maximum number of operations a single json patch may contain.
+	maxJSONPatchOperations = 10000
+)
+
 // PatchResource returns a function that will handle a resource patch.
 func PatchResource(r rest.Patcher, scope RequestScope, admit admission.Interface, patchTypes []string) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
@@ -88,7 +93,7 @@ func PatchResource(r rest.Patcher, scope RequestScope, admit admission.Interface
 		ctx := req.Context()
 		ctx = request.WithNamespace(ctx, namespace)
 
-		patchJS, err := readBody(req)
+		patchJS, err := limitedReadBody(req, scope.MaxRequestBodyBytes)
 		if err != nil {
 			scope.err(err, w, req)
 			return
@@ -283,9 +288,23 @@ func (p *jsonPatcher) applyPatchToCurrentObject(currentObject runtime.Object) (r
 func (p *jsonPatcher) applyJSPatch(versionedJS []byte) (patchedJS []byte, retErr error) {
 	switch p.patchType {
 	case types.JSONPatchType:
+		// sanity check potentially abusive patches
+		// TODO(liggitt): drop this once golang json parser limits stack depth (https://github.com/golang/go/issues/31789)
+		if len(p.patchJS) > 1024*1024 {
+			v := []interface{}{}
+			if err := json.Unmarshal(p.patchJS, v); err != nil {
+				return nil, errors.NewBadRequest(fmt.Sprintf("error decoding patch: %v", err))
+			}
+		}
+
 		patchObj, err := jsonpatch.DecodePatch(p.patchJS)
 		if err != nil {
 			return nil, errors.NewBadRequest(err.Error())
+		}
+		if len(patchObj) > maxJSONPatchOperations {
+			return nil, errors.NewRequestEntityTooLargeError(
+				fmt.Sprintf("The allowed maximum operations in a JSON patch is %d, got %d",
+					maxJSONPatchOperations, len(patchObj)))
 		}
 		patchedJS, err := patchObj.Apply(versionedJS)
 		if err != nil {
@@ -293,6 +312,15 @@ func (p *jsonPatcher) applyJSPatch(versionedJS []byte) (patchedJS []byte, retErr
 		}
 		return patchedJS, nil
 	case types.MergePatchType:
+		// sanity check potentially abusive patches
+		// TODO(liggitt): drop this once golang json parser limits stack depth (https://github.com/golang/go/issues/31789)
+		if len(p.patchJS) > 1024*1024 {
+			v := map[string]interface{}{}
+			if err := json.Unmarshal(p.patchJS, v); err != nil {
+				return nil, errors.NewBadRequest(fmt.Sprintf("error decoding patch: %v", err))
+			}
+		}
+
 		return jsonpatch.MergePatch(versionedJS, p.patchJS)
 	default:
 		// only here as a safety net - go-restful filters content-type

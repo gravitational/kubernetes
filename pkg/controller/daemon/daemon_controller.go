@@ -966,6 +966,12 @@ func (dsc *DaemonSetsController) manage(ds *apps.DaemonSet, hash string) error {
 		failedPodsObserved += failedPodsObservedOnNode
 	}
 
+	// Remove unscheduled pods assigned to not existing nodes when daemonset pods are scheduled by scheduler.
+	// If node doesn't exist then pods are never scheduled and can't be deleted by PodGCController.
+	if utilfeature.DefaultFeatureGate.Enabled(features.ScheduleDaemonSetPods) {
+		podsToDelete = append(podsToDelete, getUnscheduledPodsWithoutNode(nodeList, nodeToDaemonPods)...)
+	}
+
 	// Label new pods using the hash label value of the current history when creating them
 	if err = dsc.syncNodes(ds, podsToDelete, nodesNeedingDaemonPods, hash); err != nil {
 		return err
@@ -1534,4 +1540,24 @@ func isControlledByDaemonSet(p *v1.Pod, uuid types.UID) bool {
 
 func failedPodsBackoffKey(ds *apps.DaemonSet, nodeName string) string {
 	return fmt.Sprintf("%s/%d/%s", ds.UID, ds.Status.ObservedGeneration, nodeName)
+}
+
+// getUnscheduledPodsWithoutNode returns list of unscheduled pods assigned to not existing nodes.
+// Returned pods can't be deleted by PodGCController so they should be deleted by DaemonSetController.
+func getUnscheduledPodsWithoutNode(runningNodesList []*v1.Node, nodeToDaemonPods map[string][]*v1.Pod) []string {
+	var results []string
+	isNodeRunning := make(map[string]bool)
+	for _, node := range runningNodesList {
+		isNodeRunning[node.Name] = true
+	}
+	for n, pods := range nodeToDaemonPods {
+		if !isNodeRunning[n] {
+			for _, pod := range pods {
+				if len(pod.Spec.NodeName) == 0 {
+					results = append(results, pod.Name)
+				}
+			}
+		}
+	}
+	return results
 }

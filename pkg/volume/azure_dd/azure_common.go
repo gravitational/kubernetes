@@ -25,7 +25,7 @@ import (
 	"strconv"
 	libstrings "strings"
 
-	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2018-10-01/compute"
+	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2019-03-01/compute"
 
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -40,7 +40,7 @@ import (
 const (
 	defaultStorageAccountType       = compute.StandardLRS
 	defaultAzureDiskKind            = v1.AzureManagedDisk
-	defaultAzureDataDiskCachingMode = v1.AzureDataDiskCachingNone
+	defaultAzureDataDiskCachingMode = v1.AzureDataDiskCachingReadOnly
 )
 
 type dataDisk struct {

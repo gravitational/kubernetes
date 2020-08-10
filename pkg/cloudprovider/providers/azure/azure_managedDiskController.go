@@ -23,7 +23,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2018-10-01/compute"
+	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2019-03-01/compute"
 	"github.com/Azure/go-autorest/autorest/to"
 	"k8s.io/klog"
 
@@ -66,10 +66,6 @@ type ManagedDiskOptions struct {
 	DiskIOPSReadWrite string
 	// Throughput Cap (MBps) for UltraSSD disk
 	DiskMBpsReadWrite string
-}
-
-func newManagedDiskController(common *controllerCommon) (*ManagedDiskController, error) {
-	return &ManagedDiskController{common: common}, nil
 }
 
 //CreateManagedDisk : create managed disk

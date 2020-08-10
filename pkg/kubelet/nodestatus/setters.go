@@ -270,7 +270,9 @@ func MachineInfo(nodeName string,
 				// capacity for every node status request
 				initialCapacity := capacityFunc()
 				if initialCapacity != nil {
-					node.Status.Capacity[v1.ResourceEphemeralStorage] = initialCapacity[v1.ResourceEphemeralStorage]
+					if v, exists := initialCapacity[v1.ResourceEphemeralStorage]; exists {
+						node.Status.Capacity[v1.ResourceEphemeralStorage] = v
+					}
 				}
 			}
 
@@ -741,6 +743,21 @@ func VolumeLimits(volumePluginListFunc func() []volume.VolumePluginWithAttachLim
 				node.Status.Allocatable[v1.ResourceName(limitKey)] = *resource.NewQuantity(value, resource.DecimalSI)
 			}
 		}
+		return nil
+	}
+}
+
+// RemoveOutOfDiskCondition removes stale OutOfDisk condition
+// OutOfDisk condition has been removed from kubelet in 1.12
+func RemoveOutOfDiskCondition() Setter {
+	return func(node *v1.Node) error {
+		var conditions []v1.NodeCondition
+		for i := range node.Status.Conditions {
+			if node.Status.Conditions[i].Type != v1.NodeOutOfDisk {
+				conditions = append(conditions, node.Status.Conditions[i])
+			}
+		}
+		node.Status.Conditions = conditions
 		return nil
 	}
 }

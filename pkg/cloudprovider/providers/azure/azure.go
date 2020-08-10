@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -47,14 +48,15 @@ import (
 
 const (
 	// CloudProviderName is the value used for the --cloud-provider flag
-	CloudProviderName            = "azure"
-	rateLimitQPSDefault          = 1.0
-	rateLimitBucketDefault       = 5
-	backoffRetriesDefault        = 6
-	backoffExponentDefault       = 1.5
-	backoffDurationDefault       = 5 // in seconds
-	backoffJitterDefault         = 1.0
-	maximumLoadBalancerRuleCount = 148 // According to Azure LB rule default limit
+	CloudProviderName      = "azure"
+	rateLimitQPSDefault    = 1.0
+	rateLimitBucketDefault = 5
+	backoffRetriesDefault  = 6
+	backoffExponentDefault = 1.5
+	backoffDurationDefault = 5 // in seconds
+	backoffJitterDefault   = 1.0
+	// According to https://docs.microsoft.com/en-us/azure/azure-subscription-service-limits#load-balancer.
+	maximumLoadBalancerRuleCount = 250
 
 	vmTypeVMSS     = "vmss"
 	vmTypeStandard = "standard"
@@ -69,6 +71,8 @@ const (
 var (
 	// Master nodes are not added to standard load balancer by default.
 	defaultExcludeMasterFromStandardLB = true
+	// Outbound SNAT is enabled by default.
+	defaultDisableOutboundSNAT = false
 )
 
 // Azure implements PVLabeler.
@@ -138,6 +142,9 @@ type Config struct {
 	// ExcludeMasterFromStandardLB excludes master nodes from standard load balancer.
 	// If not set, it will be default to true.
 	ExcludeMasterFromStandardLB *bool `json:"excludeMasterFromStandardLB" yaml:"excludeMasterFromStandardLB"`
+	// DisableOutboundSNAT disables the outbound SNAT for public load balancer rules.
+	// It should only be set when loadBalancerSku is standard. If not set, it will be default to false.
+	DisableOutboundSNAT *bool `json:"disableOutboundSNAT" yaml:"disableOutboundSNAT"`
 
 	// Maximum allowed LoadBalancer Rule Count is the limit enforced by Azure Load balancer
 	MaximumLoadBalancerRuleCount int `json:"maximumLoadBalancerRuleCount" yaml:"maximumLoadBalancerRuleCount"`
@@ -201,6 +208,20 @@ type Cloud struct {
 }
 
 func init() {
+	// In go-autorest SDK https://github.com/Azure/go-autorest/blob/master/autorest/sender.go#L258-L287,
+	// if ARM returns http.StatusTooManyRequests, the sender doesn't increase the retry attempt count,
+	// hence the Azure clients will keep retrying forever until it get a status code other than 429.
+	// So we explicitly removes http.StatusTooManyRequests from autorest.StatusCodesForRetry.
+	// Refer https://github.com/Azure/go-autorest/issues/398.
+	// TODO(feiskyer): Use autorest.SendDecorator to customize the retry policy when new Azure SDK is available.
+	statusCodesForRetry := make([]int, 0)
+	for _, code := range autorest.StatusCodesForRetry {
+		if code != http.StatusTooManyRequests {
+			statusCodesForRetry = append(statusCodesForRetry, code)
+		}
+	}
+	autorest.StatusCodesForRetry = statusCodesForRetry
+
 	cloudprovider.RegisterCloudProvider(CloudProviderName, NewCloud)
 }
 
@@ -264,9 +285,20 @@ func NewCloud(configReader io.Reader) (cloudprovider.Interface, error) {
 			config.CloudProviderRateLimitBucketWrite)
 	}
 
-	// Do not add master nodes to standard LB by default.
-	if config.ExcludeMasterFromStandardLB == nil {
-		config.ExcludeMasterFromStandardLB = &defaultExcludeMasterFromStandardLB
+	if strings.EqualFold(config.LoadBalancerSku, loadBalancerSkuStandard) {
+		// Do not add master nodes to standard LB by default.
+		if config.ExcludeMasterFromStandardLB == nil {
+			config.ExcludeMasterFromStandardLB = &defaultExcludeMasterFromStandardLB
+		}
+
+		// Enable outbound SNAT by default.
+		if config.DisableOutboundSNAT == nil {
+			config.DisableOutboundSNAT = &defaultDisableOutboundSNAT
+		}
+	} else {
+		if config.DisableOutboundSNAT != nil && *config.DisableOutboundSNAT {
+			return nil, fmt.Errorf("disableOutboundSNAT should only set when loadBalancerSku is standard")
+		}
 	}
 
 	azClientConfig := &azClientConfig{
@@ -456,22 +488,8 @@ func initDiskControllers(az *Cloud) error {
 		cloud:                 az,
 	}
 
-	// BlobDiskController: contains the function needed to
-	// create/attach/detach/delete blob based (unmanaged disks)
-	blobController, err := newBlobDiskController(common)
-	if err != nil {
-		return fmt.Errorf("AzureDisk -  failed to init Blob Disk Controller with error (%s)", err.Error())
-	}
-
-	// ManagedDiskController: contains the functions needed to
-	// create/attach/detach/delete managed disks
-	managedController, err := newManagedDiskController(common)
-	if err != nil {
-		return fmt.Errorf("AzureDisk -  failed to init Managed  Disk Controller with error (%s)", err.Error())
-	}
-
-	az.BlobDiskController = blobController
-	az.ManagedDiskController = managedController
+	az.BlobDiskController = &BlobDiskController{common: common}
+	az.ManagedDiskController = &ManagedDiskController{common: common}
 	az.controllerCommon = common
 
 	return nil

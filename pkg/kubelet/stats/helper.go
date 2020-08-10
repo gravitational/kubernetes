@@ -52,7 +52,7 @@ func cadvisorInfoToCPUandMemoryStats(info *cadvisorapiv2.ContainerInfo) (*statsa
 			cpuStats.UsageCoreNanoSeconds = &cstat.Cpu.Usage.Total
 		}
 	}
-	if info.Spec.HasMemory {
+	if info.Spec.HasMemory && cstat.Memory != nil {
 		pageFaults := cstat.Memory.ContainerData.Pgfault
 		majorPageFaults := cstat.Memory.ContainerData.Pgmajfault
 		memoryStats = &statsapi.MemoryStats{
@@ -325,4 +325,8 @@ func getUint64Value(value *uint64) uint64 {
 	}
 
 	return *value
+}
+
+func Uint64Ptr(i uint64) *uint64 {
+	return &i
 }

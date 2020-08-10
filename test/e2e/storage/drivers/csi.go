@@ -67,9 +67,9 @@ func InitHostPathCSIDriver() TestDriver {
 			SupportedFsType: sets.NewString(
 				"", // Default fsType
 			),
-			IsPersistent:       true,
-			IsFsGroupSupported: false,
-			IsBlockSupported:   false,
+			Capabilities: map[Capability]bool{
+				CapPersistence: true,
+			},
 		},
 	}
 }
@@ -153,9 +153,9 @@ func InitHostV0PathCSIDriver() TestDriver {
 			SupportedFsType: sets.NewString(
 				"", // Default fsType
 			),
-			IsPersistent:       true,
-			IsFsGroupSupported: false,
-			IsBlockSupported:   false,
+			Capabilities: map[Capability]bool{
+				CapPersistence: true,
+			},
 		},
 	}
 }
@@ -243,9 +243,12 @@ func InitGcePDCSIDriver() TestDriver {
 				"ext4",
 				"xfs",
 			),
-			IsPersistent:       true,
-			IsFsGroupSupported: true,
-			IsBlockSupported:   false,
+			Capabilities: map[Capability]bool{
+				CapPersistence: true,
+				CapFsGroup:     true,
+				CapExec:        true,
+			},
+			SupportedMountOption: sets.NewString("debug", "nouid32"),
 		},
 	}
 }
@@ -334,9 +337,11 @@ func InitGcePDExternalCSIDriver() TestDriver {
 				"ext4",
 				"xfs",
 			),
-			IsPersistent:       true,
-			IsFsGroupSupported: true,
-			IsBlockSupported:   false,
+			Capabilities: map[Capability]bool{
+				CapPersistence: true,
+				CapFsGroup:     true,
+				CapExec:        true,
+			},
 		},
 	}
 }

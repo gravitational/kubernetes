@@ -17,11 +17,12 @@ limitations under the License.
 package azure
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"testing"
 
-	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2017-09-01/network"
+	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2018-07-01/network"
 	"github.com/Azure/go-autorest/autorest/to"
 	"github.com/stretchr/testify/assert"
 	"k8s.io/api/core/v1"
@@ -240,6 +241,97 @@ func TestGetIdleTimeout(t *testing.T) {
 			if (err != nil) != c.err {
 				t.Fatalf("expected error=%v, got %v", c.err, err)
 			}
+		})
+	}
+}
+
+func TestEnsureLoadBalancerDeleted(t *testing.T) {
+	const vmCount = 8
+	const availabilitySetCount = 4
+	const serviceCount = 9
+
+	tests := []struct {
+		desc              string
+		service           v1.Service
+		expectCreateError bool
+	}{
+		{
+			desc:    "external service should be created and deleted successfully",
+			service: getTestService("test1", v1.ProtocolTCP, 80),
+		},
+		{
+			desc:    "internal service should be created and deleted successfully",
+			service: getInternalTestService("test2", 80),
+		},
+		{
+			desc:    "annotated service with same resourceGroup should be created and deleted successfully",
+			service: getResourceGroupTestService("test3", "rg", "", 80),
+		},
+		{
+			desc:              "annotated service with different resourceGroup shouldn't be created but should be deleted successfully",
+			service:           getResourceGroupTestService("test4", "random-rg", "1.2.3.4", 80),
+			expectCreateError: true,
+		},
+	}
+
+	az := getTestCloud()
+	for i, c := range tests {
+		clusterResources := getClusterResources(az, vmCount, availabilitySetCount)
+		getTestSecurityGroup(az)
+		if c.service.Annotations[ServiceAnnotationLoadBalancerInternal] == "true" {
+			addTestSubnet(t, az, &c.service)
+		}
+
+		// create the service first.
+		lbStatus, err := az.EnsureLoadBalancer(context.TODO(), testClusterName, &c.service, clusterResources.nodes)
+		if c.expectCreateError {
+			assert.NotNil(t, err, "TestCase[%d]: %s", i, c.desc)
+		} else {
+			assert.Nil(t, err, "TestCase[%d]: %s", i, c.desc)
+			assert.NotNil(t, lbStatus, "TestCase[%d]: %s", i, c.desc)
+			result, err := az.LoadBalancerClient.List(context.TODO(), az.Config.ResourceGroup)
+			assert.Nil(t, err, "TestCase[%d]: %s", i, c.desc)
+			assert.Equal(t, len(result), 1, "TestCase[%d]: %s", i, c.desc)
+			assert.Equal(t, len(*result[0].LoadBalancingRules), 1, "TestCase[%d]: %s", i, c.desc)
+		}
+
+		// finally, delete it.
+		err = az.EnsureLoadBalancerDeleted(context.TODO(), testClusterName, &c.service)
+		assert.Nil(t, err, "TestCase[%d]: %s", i, c.desc)
+		result, err := az.LoadBalancerClient.List(context.Background(), az.Config.ResourceGroup)
+		assert.Nil(t, err, "TestCase[%d]: %s", i, c.desc)
+		assert.Equal(t, len(result), 0, "TestCase[%d]: %s", i, c.desc)
+	}
+}
+
+func TestGetPublicIPAddressResourceGroup(t *testing.T) {
+	az := getTestCloud()
+
+	for i, c := range []struct {
+		desc        string
+		annotations map[string]string
+		expected    string
+	}{
+		{
+			desc:     "no annotation",
+			expected: "rg",
+		},
+		{
+			desc:        "annoation with empty string resource group",
+			annotations: map[string]string{ServiceAnnotationLoadBalancerResourceGroup: ""},
+			expected:    "rg",
+		},
+		{
+			desc:        "annoation with non-empty resource group ",
+			annotations: map[string]string{ServiceAnnotationLoadBalancerResourceGroup: "rg2"},
+			expected:    "rg2",
+		},
+	} {
+		t.Run(c.desc, func(t *testing.T) {
+			s := &v1.Service{}
+			s.Annotations = c.annotations
+			real := az.getPublicIPAddressResourceGroup(s)
+			assert.Equal(t, c.expected, real, "TestCase[%d]: %s", i, c.desc)
 		})
 	}
 }

@@ -7,10 +7,6 @@
 	],
 	"Deps": [
 		{
-			"ImportPath": "bitbucket.org/ww/goautoneg",
-			"Rev": "75cd24fc2f2c2a2088577d12123ddee5f54e0675"
-		},
-		{
 			"ImportPath": "github.com/Azure/go-ansiterm",
 			"Rev": "d6e3b3328b783f23731bc4d058875b0371ff8109"
 		},
@@ -108,7 +104,7 @@
 		},
 		{
 			"ImportPath": "github.com/evanphx/json-patch",
-			"Rev": "36442dbdb585210f8d5a1b45e67aa323c197d5c4"
+			"Rev": "5858425f75500d40c52783dce87d085a483ce135"
 		},
 		{
 			"ImportPath": "github.com/go-openapi/jsonpointer",
@@ -243,6 +239,10 @@
 			"Rev": "94122c33edd36123c84d5368cfb2b69df93a0ec8"
 		},
 		{
+			"ImportPath": "github.com/munnerz/goautoneg",
+			"Rev": "a547fc61f48d567d5b4ec6f8aee5573d8efce11d"
+		},
+		{
 			"ImportPath": "github.com/mxk/go-flowrate/flowrate",
 			"Rev": "cca7078d478f8520f85629ad7c68962d31ed7682"
 		},
@@ -308,43 +308,43 @@
 		},
 		{
 			"ImportPath": "golang.org/x/net/context",
-			"Rev": "0ed95abb35c445290478a5348a7b38bb154135fd"
+			"Rev": "b1cc14aba47abf96f96818003fa4caad3a4b4e86"
 		},
 		{
 			"ImportPath": "golang.org/x/net/html",
-			"Rev": "0ed95abb35c445290478a5348a7b38bb154135fd"
+			"Rev": "b1cc14aba47abf96f96818003fa4caad3a4b4e86"
 		},
 		{
 			"ImportPath": "golang.org/x/net/html/atom",
-			"Rev": "0ed95abb35c445290478a5348a7b38bb154135fd"
+			"Rev": "b1cc14aba47abf96f96818003fa4caad3a4b4e86"
+		},
+		{
+			"ImportPath": "golang.org/x/net/http/httpguts",
+			"Rev": "b1cc14aba47abf96f96818003fa4caad3a4b4e86"
 		},
 		{
 			"ImportPath": "golang.org/x/net/http2",
-			"Rev": "0ed95abb35c445290478a5348a7b38bb154135fd"
+			"Rev": "b1cc14aba47abf96f96818003fa4caad3a4b4e86"
 		},
 		{
 			"ImportPath": "golang.org/x/net/http2/hpack",
-			"Rev": "0ed95abb35c445290478a5348a7b38bb154135fd"
+			"Rev": "b1cc14aba47abf96f96818003fa4caad3a4b4e86"
 		},
 		{
 			"ImportPath": "golang.org/x/net/idna",
-			"Rev": "0ed95abb35c445290478a5348a7b38bb154135fd"
+			"Rev": "b1cc14aba47abf96f96818003fa4caad3a4b4e86"
 		},
 		{
 			"ImportPath": "golang.org/x/net/internal/timeseries",
-			"Rev": "0ed95abb35c445290478a5348a7b38bb154135fd"
-		},
-		{
-			"ImportPath": "golang.org/x/net/lex/httplex",
-			"Rev": "0ed95abb35c445290478a5348a7b38bb154135fd"
+			"Rev": "b1cc14aba47abf96f96818003fa4caad3a4b4e86"
 		},
 		{
 			"ImportPath": "golang.org/x/net/trace",
-			"Rev": "0ed95abb35c445290478a5348a7b38bb154135fd"
+			"Rev": "b1cc14aba47abf96f96818003fa4caad3a4b4e86"
 		},
 		{
 			"ImportPath": "golang.org/x/net/websocket",
-			"Rev": "0ed95abb35c445290478a5348a7b38bb154135fd"
+			"Rev": "b1cc14aba47abf96f96818003fa4caad3a4b4e86"
 		},
 		{
 			"ImportPath": "golang.org/x/oauth2",
@@ -528,7 +528,7 @@
 		},
 		{
 			"ImportPath": "gopkg.in/yaml.v2",
-			"Rev": "5420a8b6744d3b0345ab293f6fcba19c978f1183"
+			"Rev": "f221b8435cfb71e54062f6c6e99e9ade30b124d5"
 		},
 		{
 			"ImportPath": "k8s.io/api/admission/v1beta1",
@@ -1828,27 +1828,27 @@
 		},
 		{
 			"ImportPath": "k8s.io/kube-openapi/pkg/aggregator",
-			"Rev": "c59034cc13d587f5ef4e85ca0ade0c1866ae8e1d"
+			"Rev": "fd52d7a69c206aae478f9aff43cb10eaf25e5c2a"
 		},
 		{
 			"ImportPath": "k8s.io/kube-openapi/pkg/builder",
-			"Rev": "c59034cc13d587f5ef4e85ca0ade0c1866ae8e1d"
+			"Rev": "fd52d7a69c206aae478f9aff43cb10eaf25e5c2a"
 		},
 		{
 			"ImportPath": "k8s.io/kube-openapi/pkg/common",
-			"Rev": "c59034cc13d587f5ef4e85ca0ade0c1866ae8e1d"
+			"Rev": "fd52d7a69c206aae478f9aff43cb10eaf25e5c2a"
 		},
 		{
 			"ImportPath": "k8s.io/kube-openapi/pkg/handler",
-			"Rev": "c59034cc13d587f5ef4e85ca0ade0c1866ae8e1d"
+			"Rev": "fd52d7a69c206aae478f9aff43cb10eaf25e5c2a"
 		},
 		{
 			"ImportPath": "k8s.io/kube-openapi/pkg/util",
-			"Rev": "c59034cc13d587f5ef4e85ca0ade0c1866ae8e1d"
+			"Rev": "fd52d7a69c206aae478f9aff43cb10eaf25e5c2a"
 		},
 		{
 			"ImportPath": "k8s.io/kube-openapi/pkg/util/proto",
-			"Rev": "c59034cc13d587f5ef4e85ca0ade0c1866ae8e1d"
+			"Rev": "fd52d7a69c206aae478f9aff43cb10eaf25e5c2a"
 		},
 		{
 			"ImportPath": "sigs.k8s.io/yaml",

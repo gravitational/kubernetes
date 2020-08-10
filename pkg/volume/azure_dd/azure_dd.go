@@ -20,8 +20,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
-	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2018-10-01/compute"
+	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2019-03-01/compute"
 	"github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2018-07-01/storage"
 	"k8s.io/klog"
 
@@ -43,9 +44,9 @@ type DiskController interface {
 	DeleteManagedDisk(diskURI string) error
 
 	// Attaches the disk to the host machine.
-	AttachDisk(isManagedDisk bool, diskName, diskUri string, nodeName types.NodeName, lun int32, cachingMode compute.CachingTypes) error
+	AttachDisk(isManagedDisk bool, diskName, diskUri string, nodeName types.NodeName, cachingMode compute.CachingTypes) error
 	// Detaches the disk, identified by disk name or uri, from the host machine.
-	DetachDiskByName(diskName, diskUri string, nodeName types.NodeName) error
+	DetachDisk(diskName, diskUri string, nodeName types.NodeName) error
 
 	// Check if a list of volumes are attached to the node with the specified NodeName
 	DisksAreAttached(diskNames []string, nodeName types.NodeName) (map[string]bool, error)
@@ -160,7 +161,9 @@ func (plugin *azureDataDiskPlugin) GetVolumeLimits() (map[string]int64, error) {
 	}
 
 	if vmSizeList == nil {
-		result, err := az.VirtualMachineSizesClient.List(context.TODO(), az.Location)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		result, err := az.VirtualMachineSizesClient.List(ctx, az.Location)
 		if err != nil || result.Value == nil {
 			klog.Errorf("failed to list vm sizes in GetVolumeLimits, plugin.host: %s, location: %s", plugin.host.GetHostName(), az.Location)
 			return volumeLimits, nil
@@ -187,7 +190,7 @@ func getMaxDataDiskCount(instanceType string, sizeList *[]compute.VirtualMachine
 			continue
 		}
 		if strings.ToUpper(*size.Name) == vmsize {
-			klog.V(2).Infof("got a matching size in getMaxDataDiskCount, Name: %s, MaxDataDiskCount: %d", *size.Name, *size.MaxDataDiskCount)
+			klog.V(12).Infof("got a matching size in getMaxDataDiskCount, Name: %s, MaxDataDiskCount: %d", *size.Name, *size.MaxDataDiskCount)
 			return int64(*size.MaxDataDiskCount)
 		}
 	}
