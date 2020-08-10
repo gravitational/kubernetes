@@ -19,8 +19,13 @@ import (
 
 	info "github.com/google/cadvisor/info/v1"
 
+	"github.com/google/cadvisor/container"
 	"github.com/opencontainers/runc/libcontainer/cgroups"
-	"k8s.io/klog"
+
+	fs "github.com/opencontainers/runc/libcontainer/cgroups/fs"
+	fs2 "github.com/opencontainers/runc/libcontainer/cgroups/fs2"
+	configs "github.com/opencontainers/runc/libcontainer/configs"
+	"k8s.io/klog/v2"
 )
 
 type CgroupSubsystems struct {
@@ -33,18 +38,37 @@ type CgroupSubsystems struct {
 	MountPoints map[string]string
 }
 
-// Get information about the cgroup subsystems.
-func GetCgroupSubsystems() (CgroupSubsystems, error) {
+// Get information about the cgroup subsystems those we want
+func GetCgroupSubsystems(includedMetrics container.MetricSet) (CgroupSubsystems, error) {
 	// Get all cgroup mounts.
 	allCgroups, err := cgroups.GetCgroupMounts(true)
 	if err != nil {
 		return CgroupSubsystems{}, err
 	}
 
-	return getCgroupSubsystemsHelper(allCgroups)
+	disableCgroups := map[string]struct{}{}
+
+	//currently we only support disable blkio subsystem
+	if !includedMetrics.Has(container.DiskIOMetrics) {
+		disableCgroups["blkio"] = struct{}{}
+		disableCgroups["io"] = struct{}{}
+	}
+	return getCgroupSubsystemsHelper(allCgroups, disableCgroups)
 }
 
-func getCgroupSubsystemsHelper(allCgroups []cgroups.Mount) (CgroupSubsystems, error) {
+// Get information about all the cgroup subsystems.
+func GetAllCgroupSubsystems() (CgroupSubsystems, error) {
+	// Get all cgroup mounts.
+	allCgroups, err := cgroups.GetCgroupMounts(true)
+	if err != nil {
+		return CgroupSubsystems{}, err
+	}
+
+	emptyDisableCgroups := map[string]struct{}{}
+	return getCgroupSubsystemsHelper(allCgroups, emptyDisableCgroups)
+}
+
+func getCgroupSubsystemsHelper(allCgroups []cgroups.Mount, disableCgroups map[string]struct{}) (CgroupSubsystems, error) {
 	if len(allCgroups) == 0 {
 		return CgroupSubsystems{}, fmt.Errorf("failed to find cgroup mounts")
 	}
@@ -55,6 +79,9 @@ func getCgroupSubsystemsHelper(allCgroups []cgroups.Mount) (CgroupSubsystems, er
 	mountPoints := make(map[string]string, len(allCgroups))
 	for _, mount := range allCgroups {
 		for _, subsystem := range mount.Subsystems {
+			if _, exists := disableCgroups[subsystem]; exists {
+				continue
+			}
 			if _, ok := supportedSubsystems[subsystem]; !ok {
 				// Unsupported subsystem
 				continue
@@ -81,12 +108,16 @@ func getCgroupSubsystemsHelper(allCgroups []cgroups.Mount) (CgroupSubsystems, er
 
 // Cgroup subsystems we support listing (should be the minimal set we need stats from).
 var supportedSubsystems map[string]struct{} = map[string]struct{}{
-	"cpu":     {},
-	"cpuacct": {},
-	"memory":  {},
-	"cpuset":  {},
-	"blkio":   {},
-	"devices": {},
+	"cpu":        {},
+	"cpuacct":    {},
+	"memory":     {},
+	"hugetlb":    {},
+	"pids":       {},
+	"cpuset":     {},
+	"blkio":      {},
+	"io":         {},
+	"devices":    {},
+	"perf_event": {},
 }
 
 func DiskStatsCopy0(major, minor uint64) *info.PerDiskStats {
@@ -103,38 +134,51 @@ type DiskKey struct {
 	Minor uint64
 }
 
-func DiskStatsCopy1(disk_stat map[DiskKey]*info.PerDiskStats) []info.PerDiskStats {
+func DiskStatsCopy1(diskStat map[DiskKey]*info.PerDiskStats) []info.PerDiskStats {
 	i := 0
-	stat := make([]info.PerDiskStats, len(disk_stat))
-	for _, disk := range disk_stat {
+	stat := make([]info.PerDiskStats, len(diskStat))
+	for _, disk := range diskStat {
 		stat[i] = *disk
 		i++
 	}
 	return stat
 }
 
-func DiskStatsCopy(blkio_stats []cgroups.BlkioStatEntry) (stat []info.PerDiskStats) {
-	if len(blkio_stats) == 0 {
+func DiskStatsCopy(blkioStats []cgroups.BlkioStatEntry) (stat []info.PerDiskStats) {
+	if len(blkioStats) == 0 {
 		return
 	}
-	disk_stat := make(map[DiskKey]*info.PerDiskStats)
-	for i := range blkio_stats {
-		major := blkio_stats[i].Major
-		minor := blkio_stats[i].Minor
-		disk_key := DiskKey{
+	diskStat := make(map[DiskKey]*info.PerDiskStats)
+	for i := range blkioStats {
+		major := blkioStats[i].Major
+		minor := blkioStats[i].Minor
+		key := DiskKey{
 			Major: major,
 			Minor: minor,
 		}
-		diskp, ok := disk_stat[disk_key]
+		diskp, ok := diskStat[key]
 		if !ok {
 			diskp = DiskStatsCopy0(major, minor)
-			disk_stat[disk_key] = diskp
+			diskStat[key] = diskp
 		}
-		op := blkio_stats[i].Op
+		op := blkioStats[i].Op
 		if op == "" {
 			op = "Count"
 		}
-		diskp.Stats[op] = blkio_stats[i].Value
+		diskp.Stats[op] = blkioStats[i].Value
 	}
-	return DiskStatsCopy1(disk_stat)
+	return DiskStatsCopy1(diskStat)
+}
+
+func NewCgroupManager(name string, paths map[string]string) (cgroups.Manager, error) {
+	if cgroups.IsCgroup2UnifiedMode() {
+		path := paths["cpu"]
+		return fs2.NewManager(nil, path, false)
+	}
+
+	config := configs.Cgroup{
+		Name: name,
+	}
+	return fs.NewManager(&config, paths, false), nil
+
 }

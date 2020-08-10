@@ -1,3 +1,5 @@
+// +build !providerless
+
 /*
 Copyright 2016 The Kubernetes Authors.
 
@@ -21,8 +23,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Azure/azure-sdk-for-go/services/containerregistry/mgmt/2017-10-01/containerregistry"
+	"github.com/Azure/azure-sdk-for-go/services/containerregistry/mgmt/2019-05-01/containerregistry"
+	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/go-autorest/autorest/to"
+
+	"github.com/stretchr/testify/assert"
 )
 
 type fakeClient struct {
@@ -74,16 +79,16 @@ func Test(t *testing.T) {
 	}
 	provider.loadConfig(bytes.NewBufferString(configStr))
 
-	creds := provider.Provide()
+	creds := provider.Provide("")
 
-	if len(creds) != len(result) {
-		t.Errorf("Unexpected list: %v, expected length %d", creds, len(result))
+	if len(creds) != len(result)+1 {
+		t.Errorf("Unexpected list: %v, expected length %d", creds, len(result)+1)
 	}
 	for _, cred := range creds {
-		if cred.Username != "foo" {
+		if cred.Username != "" && cred.Username != "foo" {
 			t.Errorf("expected 'foo' for username, saw: %v", cred.Username)
 		}
-		if cred.Password != "bar" {
+		if cred.Password != "" && cred.Password != "bar" {
 			t.Errorf("expected 'bar' for password, saw: %v", cred.Username)
 		}
 	}
@@ -91,6 +96,107 @@ func Test(t *testing.T) {
 		registryName := getLoginServer(val)
 		if _, found := creds[registryName]; !found {
 			t.Errorf("Missing expected registry: %s", registryName)
+		}
+	}
+}
+
+func TestProvide(t *testing.T) {
+	testCases := []struct {
+		desc                string
+		configStr           string
+		expectedCredsLength int
+	}{
+		{
+			desc: "return multiple credentials using Service Principal",
+			configStr: `
+    {
+        "aadClientId": "foo",
+        "aadClientSecret": "bar"
+    }`,
+			expectedCredsLength: 5,
+		},
+		{
+			desc: "retuen 0 credential for non-ACR image using Managed Identity",
+			configStr: `
+    {
+	"UseManagedIdentityExtension": true
+    }`,
+			expectedCredsLength: 0,
+		},
+	}
+
+	for i, test := range testCases {
+		provider := &acrProvider{
+			registryClient: &fakeClient{},
+		}
+		provider.loadConfig(bytes.NewBufferString(test.configStr))
+
+		creds := provider.Provide("busybox")
+		assert.Equal(t, test.expectedCredsLength, len(creds), "TestCase[%d]: %s", i, test.desc)
+	}
+}
+
+func TestParseACRLoginServerFromImage(t *testing.T) {
+	configStr := `
+    {
+        "aadClientId": "foo",
+        "aadClientSecret": "bar"
+    }`
+	result := []containerregistry.Registry{
+		{
+			Name: to.StringPtr("foo"),
+			RegistryProperties: &containerregistry.RegistryProperties{
+				LoginServer: to.StringPtr("*.azurecr.io"),
+			},
+		},
+	}
+	fakeClient := &fakeClient{
+		results: result,
+	}
+
+	provider := &acrProvider{
+		registryClient: fakeClient,
+	}
+	provider.loadConfig(bytes.NewBufferString(configStr))
+	provider.environment = &azure.Environment{
+		ContainerRegistryDNSSuffix: ".azurecr.my.cloud",
+	}
+	tests := []struct {
+		image    string
+		expected string
+	}{
+		{
+			image:    "invalidImage",
+			expected: "",
+		},
+		{
+			image:    "docker.io/library/busybox:latest",
+			expected: "",
+		},
+		{
+			image:    "foo.azurecr.io/bar/image:version",
+			expected: "foo.azurecr.io",
+		},
+		{
+			image:    "foo.azurecr.cn/bar/image:version",
+			expected: "foo.azurecr.cn",
+		},
+		{
+			image:    "foo.azurecr.de/bar/image:version",
+			expected: "foo.azurecr.de",
+		},
+		{
+			image:    "foo.azurecr.us/bar/image:version",
+			expected: "foo.azurecr.us",
+		},
+		{
+			image:    "foo.azurecr.my.cloud/bar/image:version",
+			expected: "foo.azurecr.my.cloud",
+		},
+	}
+	for _, test := range tests {
+		if loginServer := provider.parseACRLoginServerFromImage(test.image); loginServer != test.expected {
+			t.Errorf("function parseACRLoginServerFromImage returns \"%s\" for image %s, expected \"%s\"", loginServer, test.image, test.expected)
 		}
 	}
 }

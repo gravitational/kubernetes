@@ -14,6 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// WARNING: DO NOT add new use-caes to this package as it is deprecated and slated for deletion.
+
 package ssh
 
 import (
@@ -26,7 +28,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
 	mathrand "math/rand"
 	"net"
@@ -37,82 +38,69 @@ import (
 	"sync"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/crypto/ssh"
-	"k8s.io/klog"
 
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/component-base/metrics"
+	"k8s.io/component-base/metrics/legacyregistry"
+	"k8s.io/klog/v2"
 )
 
+/*
+ * By default, all the following metrics are defined as falling under
+ * ALPHA stability level https://github.com/kubernetes/enhancements/blob/master/keps/sig-instrumentation/20190404-kubernetes-control-plane-metrics-stability.md#stability-classes)
+ *
+ * Promoting the stability level of the metric is a responsibility of the component owner, since it
+ * involves explicitly acknowledging support for the metric across multiple releases, in accordance with
+ * the metric stability policy.
+ */
 var (
-	tunnelOpenCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Name: "ssh_tunnel_open_count",
-			Help: "Counter of ssh tunnel total open attempts",
+	tunnelOpenCounter = metrics.NewCounter(
+		&metrics.CounterOpts{
+			Name:           "ssh_tunnel_open_count",
+			Help:           "Counter of ssh tunnel total open attempts",
+			StabilityLevel: metrics.ALPHA,
 		},
 	)
-	tunnelOpenFailCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Name: "ssh_tunnel_open_fail_count",
-			Help: "Counter of ssh tunnel failed open attempts",
+	tunnelOpenFailCounter = metrics.NewCounter(
+		&metrics.CounterOpts{
+			Name:           "ssh_tunnel_open_fail_count",
+			Help:           "Counter of ssh tunnel failed open attempts",
+			StabilityLevel: metrics.ALPHA,
 		},
 	)
 )
 
 func init() {
-	prometheus.MustRegister(tunnelOpenCounter)
-	prometheus.MustRegister(tunnelOpenFailCounter)
+	legacyregistry.MustRegister(tunnelOpenCounter)
+	legacyregistry.MustRegister(tunnelOpenFailCounter)
 }
 
 // TODO: Unit tests for this code, we can spin up a test SSH server with instructions here:
 // https://godoc.org/golang.org/x/crypto/ssh#ServerConn
-type SSHTunnel struct {
+type sshTunnel struct {
 	Config  *ssh.ClientConfig
 	Host    string
 	SSHPort string
-	running bool
-	sock    net.Listener
 	client  *ssh.Client
 }
 
-func (s *SSHTunnel) copyBytes(out io.Writer, in io.Reader) {
-	if _, err := io.Copy(out, in); err != nil {
-		klog.Errorf("Error in SSH tunnel: %v", err)
-	}
-}
-
-func NewSSHTunnel(user, keyfile, host string) (*SSHTunnel, error) {
-	signer, err := MakePrivateKeySignerFromFile(keyfile)
-	if err != nil {
-		return nil, err
-	}
-	return makeSSHTunnel(user, signer, host)
-}
-
-func NewSSHTunnelFromBytes(user string, privateKey []byte, host string) (*SSHTunnel, error) {
-	signer, err := MakePrivateKeySignerFromBytes(privateKey)
-	if err != nil {
-		return nil, err
-	}
-	return makeSSHTunnel(user, signer, host)
-}
-
-func makeSSHTunnel(user string, signer ssh.Signer, host string) (*SSHTunnel, error) {
+func makeSSHTunnel(user string, signer ssh.Signer, host string) (*sshTunnel, error) {
 	config := ssh.ClientConfig{
 		User:            user,
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
-	return &SSHTunnel{
+	return &sshTunnel{
 		Config:  &config,
 		Host:    host,
 		SSHPort: "22",
 	}, nil
 }
 
-func (s *SSHTunnel) Open() error {
+func (s *sshTunnel) Open() error {
 	var err error
 	s.client, err = realTimeoutDialer.Dial("tcp", net.JoinHostPort(s.Host, s.SSHPort), s.Config)
 	tunnelOpenCounter.Inc()
@@ -122,7 +110,7 @@ func (s *SSHTunnel) Open() error {
 	return err
 }
 
-func (s *SSHTunnel) Dial(ctx context.Context, network, address string) (net.Conn, error) {
+func (s *sshTunnel) Dial(ctx context.Context, network, address string) (net.Conn, error) {
 	if s.client == nil {
 		return nil, errors.New("tunnel is not opened.")
 	}
@@ -130,20 +118,7 @@ func (s *SSHTunnel) Dial(ctx context.Context, network, address string) (net.Conn
 	return s.client.Dial(network, address)
 }
 
-func (s *SSHTunnel) tunnel(conn net.Conn, remoteHost, remotePort string) error {
-	if s.client == nil {
-		return errors.New("tunnel is not opened.")
-	}
-	tunnel, err := s.client.Dial("tcp", net.JoinHostPort(remoteHost, remotePort))
-	if err != nil {
-		return err
-	}
-	go s.copyBytes(tunnel, conn)
-	go s.copyBytes(conn, tunnel)
-	return nil
-}
-
-func (s *SSHTunnel) Close() error {
+func (s *sshTunnel) Close() error {
 	if s.client == nil {
 		return errors.New("Cannot close tunnel. Tunnel was not opened.")
 	}
@@ -228,6 +203,7 @@ func runSSHCommand(dialer sshDialer, cmd, user, host string, signer ssh.Signer, 
 	if err != nil {
 		return "", "", 0, fmt.Errorf("error getting SSH client to %s@%s: '%v'", user, host, err)
 	}
+	defer client.Close()
 	session, err := client.NewSession()
 	if err != nil {
 		return "", "", 0, fmt.Errorf("error creating session to %s@%s: '%v'", user, host, err)
@@ -305,13 +281,17 @@ type sshTunnelEntry struct {
 }
 
 type sshTunnelCreator interface {
-	NewSSHTunnel(user, keyFile, healthCheckURL string) (tunnel, error)
+	newSSHTunnel(user, keyFile, host string) (tunnel, error)
 }
 
 type realTunnelCreator struct{}
 
-func (*realTunnelCreator) NewSSHTunnel(user, keyFile, healthCheckURL string) (tunnel, error) {
-	return NewSSHTunnel(user, keyFile, healthCheckURL)
+func (*realTunnelCreator) newSSHTunnel(user, keyFile, host string) (tunnel, error) {
+	signer, err := MakePrivateKeySignerFromFile(keyFile)
+	if err != nil {
+		return nil, err
+	}
+	return makeSSHTunnel(user, signer, host)
 }
 
 type SSHTunnelList struct {
@@ -417,7 +397,6 @@ func (l *SSHTunnelList) pickTunnel(addr string) (tunnel, error) {
 		return nil, fmt.Errorf("No SSH tunnels currently open. Were the targets able to accept an ssh-key for user %q?", l.user)
 	}
 	// Prefer same tunnel as kubelet
-	// TODO: Change l.entries to a map of address->tunnel
 	for _, entry := range l.entries {
 		if entry.Address == addr {
 			return entry.Tunnel, nil
@@ -481,7 +460,7 @@ func (l *SSHTunnelList) Update(addrs []string) {
 
 func (l *SSHTunnelList) createAndAddTunnel(addr string) {
 	klog.Infof("Trying to add tunnel to %q", addr)
-	tunnel, err := l.tunnelCreator.NewSSHTunnel(l.user, l.keyfile, addr)
+	tunnel, err := l.tunnelCreator.newSSHTunnel(l.user, l.keyfile, addr)
 	if err != nil {
 		klog.Errorf("Failed to create tunnel for %q: %v", addr, err)
 		return

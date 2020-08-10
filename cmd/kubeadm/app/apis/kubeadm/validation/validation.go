@@ -1,5 +1,5 @@
 /*
-Copyright 2016 The Kubernetes Authors.
+Copyright 2019 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -33,13 +33,13 @@ import (
 	bootstrapapi "k8s.io/cluster-bootstrap/token/api"
 	bootstraputil "k8s.io/cluster-bootstrap/token/util"
 	"k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
-	kubeadmapiv1beta1 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta1"
+	kubeadmapiv1beta2 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1beta2"
+	kubeadmcmdoptions "k8s.io/kubernetes/cmd/kubeadm/app/cmd/options"
 	"k8s.io/kubernetes/cmd/kubeadm/app/componentconfigs"
 	"k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/kubernetes/cmd/kubeadm/app/features"
 	kubeadmutil "k8s.io/kubernetes/cmd/kubeadm/app/util"
-	apivalidation "k8s.io/kubernetes/pkg/apis/core/validation"
-	"k8s.io/kubernetes/pkg/registry/core/service/ipallocator"
+	utilnet "k8s.io/utils/net"
 )
 
 // ValidateInitConfiguration validates an InitConfiguration object and collects all encountered errors
@@ -48,20 +48,22 @@ func ValidateInitConfiguration(c *kubeadm.InitConfiguration) field.ErrorList {
 	allErrs = append(allErrs, ValidateNodeRegistrationOptions(&c.NodeRegistration, field.NewPath("nodeRegistration"))...)
 	allErrs = append(allErrs, ValidateBootstrapTokens(c.BootstrapTokens, field.NewPath("bootstrapTokens"))...)
 	allErrs = append(allErrs, ValidateClusterConfiguration(&c.ClusterConfiguration)...)
+	// TODO(Arvinderpal): update advertiseAddress validation for dual-stack once it's implemented.
 	allErrs = append(allErrs, ValidateAPIEndpoint(&c.LocalAPIEndpoint, field.NewPath("localAPIEndpoint"))...)
+	// TODO: Maybe validate that .CertificateKey is a valid hex encoded AES key
 	return allErrs
 }
 
 // ValidateClusterConfiguration validates an ClusterConfiguration object and collects all encountered errors
 func ValidateClusterConfiguration(c *kubeadm.ClusterConfiguration) field.ErrorList {
 	allErrs := field.ErrorList{}
-	allErrs = append(allErrs, ValidateNetworking(&c.Networking, field.NewPath("networking"))...)
+	allErrs = append(allErrs, ValidateNetworking(c, field.NewPath("networking"))...)
 	allErrs = append(allErrs, ValidateAPIServer(&c.APIServer, field.NewPath("apiServer"))...)
 	allErrs = append(allErrs, ValidateAbsolutePath(c.CertificatesDir, field.NewPath("certificatesDir"))...)
 	allErrs = append(allErrs, ValidateFeatureGates(c.FeatureGates, field.NewPath("featureGates"))...)
 	allErrs = append(allErrs, ValidateHostPort(c.ControlPlaneEndpoint, field.NewPath("controlPlaneEndpoint"))...)
 	allErrs = append(allErrs, ValidateEtcd(&c.Etcd, field.NewPath("etcd"))...)
-	allErrs = append(allErrs, componentconfigs.Known.Validate(c)...)
+	allErrs = append(allErrs, componentconfigs.Validate(c)...)
 	return allErrs
 }
 
@@ -90,6 +92,7 @@ func ValidateJoinControlPlane(c *kubeadm.JoinControlPlane, fldPath *field.Path) 
 	allErrs := field.ErrorList{}
 	if c != nil {
 		allErrs = append(allErrs, ValidateAPIEndpoint(&c.LocalAPIEndpoint, fldPath.Child("localAPIEndpoint"))...)
+		// TODO: Maybe validate that .CertificateKey is a valid hex encoded AES key
 	}
 	return allErrs
 }
@@ -100,7 +103,10 @@ func ValidateNodeRegistrationOptions(nro *kubeadm.NodeRegistrationOptions, fldPa
 	if len(nro.Name) == 0 {
 		allErrs = append(allErrs, field.Required(fldPath, "--node-name or .nodeRegistration.name in the config file is a required value. It seems like this value couldn't be automatically detected in your environment, please specify the desired value using the CLI or config file."))
 	} else {
-		allErrs = append(allErrs, apivalidation.ValidateDNS1123Subdomain(nro.Name, field.NewPath("name"))...)
+		nameFldPath := fldPath.Child("name")
+		for _, err := range validation.IsDNS1123Subdomain(nro.Name) {
+			allErrs = append(allErrs, field.Invalid(nameFldPath, nro.Name, err))
+		}
 	}
 	allErrs = append(allErrs, ValidateSocketPath(nro.CRISocket, fldPath.Child("criSocket"))...)
 	// TODO: Maybe validate .Taints as well in the future using something like validateNodeTaints() in pkg/apis/core/validation
@@ -143,11 +149,11 @@ func ValidateDiscoveryBootstrapToken(b *kubeadm.BootstrapTokenDiscovery, fldPath
 	}
 
 	if len(b.CACertHashes) == 0 && !b.UnsafeSkipCAVerification {
-		allErrs = append(allErrs, field.Invalid(fldPath, "", "using token-based discovery without caCertHashes can be unsafe. Set unsafeSkipCAVerification to continue"))
+		allErrs = append(allErrs, field.Invalid(fldPath, "", "using token-based discovery without caCertHashes can be unsafe. Set unsafeSkipCAVerification as true in your kubeadm config file or pass --discovery-token-unsafe-skip-ca-verification flag to continue"))
 	}
 
-	allErrs = append(allErrs, ValidateToken(b.Token, fldPath.Child("token"))...)
-	allErrs = append(allErrs, ValidateDiscoveryTokenAPIServer(b.APIServerEndpoint, fldPath.Child("apiServerEndpoints"))...)
+	allErrs = append(allErrs, ValidateToken(b.Token, fldPath.Child(kubeadmcmdoptions.TokenStr))...)
+	allErrs = append(allErrs, ValidateDiscoveryTokenAPIServer(b.APIServerEndpoint, fldPath.Child("apiServerEndpoint"))...)
 
 	return allErrs
 }
@@ -199,9 +205,9 @@ func ValidateBootstrapTokens(bts []kubeadm.BootstrapToken, fldPath *field.Path) 
 	allErrs := field.ErrorList{}
 	for i, bt := range bts {
 		btPath := fldPath.Child(fmt.Sprintf("%d", i))
-		allErrs = append(allErrs, ValidateToken(bt.Token.String(), btPath.Child("token"))...)
-		allErrs = append(allErrs, ValidateTokenUsages(bt.Usages, btPath.Child("usages"))...)
-		allErrs = append(allErrs, ValidateTokenGroups(bt.Usages, bt.Groups, btPath.Child("groups"))...)
+		allErrs = append(allErrs, ValidateToken(bt.Token.String(), btPath.Child(kubeadmcmdoptions.TokenStr))...)
+		allErrs = append(allErrs, ValidateTokenUsages(bt.Usages, btPath.Child(kubeadmcmdoptions.TokenUsages))...)
+		allErrs = append(allErrs, ValidateTokenGroups(bt.Usages, bt.Groups, btPath.Child(kubeadmcmdoptions.TokenGroups))...)
 
 		if bt.Expires != nil && bt.TTL != nil {
 			allErrs = append(allErrs, field.Invalid(btPath, "", "the BootstrapToken .TTL and .Expires fields are mutually exclusive"))
@@ -283,7 +289,7 @@ func ValidateEtcd(e *kubeadm.Etcd, fldPath *field.Path) field.ErrorList {
 		if (e.External.CertFile == "" && e.External.KeyFile != "") || (e.External.CertFile != "" && e.External.KeyFile == "") {
 			allErrs = append(allErrs, field.Invalid(externalPath, "", "either both or none of .Etcd.External.CertFile and .Etcd.External.KeyFile must be set"))
 		}
-		// If the cert and key are specified, require the VA as well
+		// If the cert and key are specified, require the CA as well
 		if e.External.CertFile != "" && e.External.KeyFile != "" && e.External.CAFile == "" {
 			allErrs = append(allErrs, field.Invalid(externalPath, "", "setting .Etcd.External.CertFile and .Etcd.External.KeyFile requires .Etcd.External.CAFile"))
 		}
@@ -306,23 +312,31 @@ func ValidateEtcd(e *kubeadm.Etcd, fldPath *field.Path) field.ErrorList {
 func ValidateCertSANs(altnames []string, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	for _, altname := range altnames {
-		if len(validation.IsDNS1123Subdomain(altname)) != 0 && net.ParseIP(altname) == nil {
-			allErrs = append(allErrs, field.Invalid(fldPath, altname, "altname is not a valid dns label or ip address"))
+		if errs := validation.IsDNS1123Subdomain(altname); len(errs) != 0 {
+			if errs2 := validation.IsWildcardDNS1123Subdomain(altname); len(errs2) != 0 {
+				if net.ParseIP(altname) == nil {
+					allErrs = append(allErrs, field.Invalid(fldPath, altname, fmt.Sprintf("altname is not a valid IP address, DNS label or a DNS label with subdomain wildcards: %s; %s", strings.Join(errs, "; "), strings.Join(errs2, "; "))))
+				}
+			}
 		}
 	}
 	return allErrs
 }
 
-// ValidateURLs validates the URLs given in the string slice, makes sure they are parseable. Optionally, it can enforcs HTTPS usage.
+// ValidateURLs validates the URLs given in the string slice, makes sure they are parsable. Optionally, it can enforces HTTPS usage.
 func ValidateURLs(urls []string, requireHTTPS bool, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
 	for _, urlstr := range urls {
 		u, err := url.Parse(urlstr)
-		if err != nil || u.Scheme == "" {
-			allErrs = append(allErrs, field.Invalid(fldPath, urlstr, "not a valid URL"))
+		if err != nil {
+			allErrs = append(allErrs, field.Invalid(fldPath, urlstr, fmt.Sprintf("URL parse error: %v", err)))
+			continue
 		}
 		if requireHTTPS && u.Scheme != "https" {
 			allErrs = append(allErrs, field.Invalid(fldPath, urlstr, "the URL must be using the HTTPS scheme"))
+		}
+		if u.Scheme == "" {
+			allErrs = append(allErrs, field.Invalid(fldPath, urlstr, "the URL without scheme is not allowed"))
 		}
 	}
 	return allErrs
@@ -356,27 +370,54 @@ func ValidateHostPort(endpoint string, fldPath *field.Path) field.ErrorList {
 }
 
 // ValidateIPNetFromString validates network portion of ip address
-func ValidateIPNetFromString(subnet string, minAddrs int64, fldPath *field.Path) field.ErrorList {
+func ValidateIPNetFromString(subnetStr string, minAddrs int64, isDualStack bool, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	_, svcSubnet, err := net.ParseCIDR(subnet)
+	subnets, err := utilnet.ParseCIDRs(strings.Split(subnetStr, ","))
 	if err != nil {
-		allErrs = append(allErrs, field.Invalid(fldPath, subnet, "couldn't parse subnet"))
+		allErrs = append(allErrs, field.Invalid(fldPath, subnetStr, "couldn't parse subnet"))
 		return allErrs
 	}
-	numAddresses := ipallocator.RangeSize(svcSubnet)
-	if numAddresses < minAddrs {
-		allErrs = append(allErrs, field.Invalid(fldPath, subnet, "subnet is too small"))
+	switch {
+	// if DualStack only 2 CIDRs allowed
+	case isDualStack && len(subnets) > 2:
+		allErrs = append(allErrs, field.Invalid(fldPath, subnetStr, "expected one (IPv4 or IPv6) CIDR or two CIDRs from each family for dual-stack networking"))
+	// if DualStack and there are 2 CIDRs validate if there is at least one of each IP family
+	case isDualStack && len(subnets) == 2:
+		areDualStackCIDRs, err := utilnet.IsDualStackCIDRs(subnets)
+		if err != nil {
+			allErrs = append(allErrs, field.Invalid(fldPath, subnetStr, err.Error()))
+		} else if !areDualStackCIDRs {
+			allErrs = append(allErrs, field.Invalid(fldPath, subnetStr, "expected one (IPv4 or IPv6) CIDR or two CIDRs from each family for dual-stack networking"))
+		}
+	// if not DualStack only one CIDR allowed
+	case !isDualStack && len(subnets) > 1:
+		allErrs = append(allErrs, field.Invalid(fldPath, subnetStr, "only one CIDR allowed for single-stack networking"))
+	}
+	// validate the subnet/s
+	for _, s := range subnets {
+		numAddresses := utilnet.RangeSize(s)
+		if numAddresses < minAddrs {
+			allErrs = append(allErrs, field.Invalid(fldPath, s.String(), "subnet is too small"))
+		}
 	}
 	return allErrs
 }
 
 // ValidateNetworking validates networking configuration
-func ValidateNetworking(c *kubeadm.Networking, fldPath *field.Path) field.ErrorList {
+func ValidateNetworking(c *kubeadm.ClusterConfiguration, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-	allErrs = append(allErrs, apivalidation.ValidateDNS1123Subdomain(c.DNSDomain, field.NewPath("dnsDomain"))...)
-	allErrs = append(allErrs, ValidateIPNetFromString(c.ServiceSubnet, constants.MinimumAddressesInServiceSubnet, field.NewPath("serviceSubnet"))...)
-	if len(c.PodSubnet) != 0 {
-		allErrs = append(allErrs, ValidateIPNetFromString(c.PodSubnet, constants.MinimumAddressesInServiceSubnet, field.NewPath("podSubnet"))...)
+	dnsDomainFldPath := field.NewPath("dnsDomain")
+	for _, err := range validation.IsDNS1123Subdomain(c.Networking.DNSDomain) {
+		allErrs = append(allErrs, field.Invalid(dnsDomainFldPath, c.Networking.DNSDomain, err))
+	}
+	// check if dual-stack feature-gate is enabled
+	isDualStack := features.Enabled(c.FeatureGates, features.IPv6DualStack)
+
+	if len(c.Networking.ServiceSubnet) != 0 {
+		allErrs = append(allErrs, ValidateIPNetFromString(c.Networking.ServiceSubnet, constants.MinimumAddressesInServiceSubnet, isDualStack, field.NewPath("serviceSubnet"))...)
+	}
+	if len(c.Networking.PodSubnet) != 0 {
+		allErrs = append(allErrs, ValidateIPNetFromString(c.Networking.PodSubnet, constants.MinimumAddressesInServiceSubnet, isDualStack, field.NewPath("podSubnet"))...)
 	}
 	return allErrs
 }
@@ -399,8 +440,8 @@ func ValidateMixedArguments(flag *pflag.FlagSet) error {
 
 	mixedInvalidFlags := []string{}
 	flag.Visit(func(f *pflag.Flag) {
-		if f.Name == "config" || f.Name == "ignore-preflight-errors" || strings.HasPrefix(f.Name, "skip-") || f.Name == "dry-run" || f.Name == "kubeconfig" || f.Name == "v" || f.Name == "rootfs" || f.Name == "print-join-command" || f.Name == "node-name" || f.Name == "cri-socket" {
-			// "--skip-*" flags or other whitelisted flags can be set with --config
+		if isAllowedFlag(f.Name) {
+			// "--skip-*" flags or other allowed flags can be set with --config
 			return
 		}
 		mixedInvalidFlags = append(mixedInvalidFlags, f.Name)
@@ -410,6 +451,24 @@ func ValidateMixedArguments(flag *pflag.FlagSet) error {
 		return errors.Errorf("can not mix '--config' with arguments %v", mixedInvalidFlags)
 	}
 	return nil
+}
+
+func isAllowedFlag(flagName string) bool {
+	knownFlags := sets.NewString(kubeadmcmdoptions.CfgPath,
+		kubeadmcmdoptions.IgnorePreflightErrors,
+		kubeadmcmdoptions.DryRun,
+		kubeadmcmdoptions.KubeconfigPath,
+		kubeadmcmdoptions.NodeName,
+		kubeadmcmdoptions.NodeCRISocket,
+		kubeadmcmdoptions.KubeconfigDir,
+		kubeadmcmdoptions.UploadCerts,
+		kubeadmcmdoptions.Kustomize,
+		kubeadmcmdoptions.Patches,
+		"print-join-command", "rootfs", "v")
+	if knownFlags.Has(flagName) {
+		return true
+	}
+	return strings.HasPrefix(flagName, "skip-")
 }
 
 // ValidateFeatureGates validates provided feature gates
@@ -423,7 +482,6 @@ func ValidateFeatureGates(featureGates map[string]bool, fldPath *field.Path) fie
 				fmt.Sprintf("%s is not a valid feature name.", k)))
 		}
 	}
-
 	return allErrs
 }
 
@@ -435,12 +493,25 @@ func ValidateAPIEndpoint(c *kubeadm.APIEndpoint, fldPath *field.Path) field.Erro
 	return allErrs
 }
 
-// ValidateIgnorePreflightErrors validates duplicates in ignore-preflight-errors flag.
-func ValidateIgnorePreflightErrors(ignorePreflightErrors []string) (sets.String, error) {
+// ValidateIgnorePreflightErrors validates duplicates in:
+// - ignore-preflight-errors flag and
+// - ignorePreflightErrors field in {Init,Join}Configuration files.
+func ValidateIgnorePreflightErrors(ignorePreflightErrorsFromCLI, ignorePreflightErrorsFromConfigFile []string) (sets.String, error) {
 	ignoreErrors := sets.NewString()
 	allErrs := field.ErrorList{}
 
-	for _, item := range ignorePreflightErrors {
+	for _, item := range ignorePreflightErrorsFromConfigFile {
+		ignoreErrors.Insert(strings.ToLower(item)) // parameters are case insensitive
+	}
+
+	if ignoreErrors.Has("all") {
+		// "all" is forbidden in config files. Administrators should use an
+		// explicit list of errors they want to ignore, as it can be risky to
+		// mask all errors in such a way. Hence, we return an error:
+		allErrs = append(allErrs, field.Invalid(field.NewPath("ignorePreflightErrors"), "all", "'all' cannot be used in configuration file"))
+	}
+
+	for _, item := range ignorePreflightErrorsFromCLI {
 		ignoreErrors.Insert(strings.ToLower(item)) // parameters are case insensitive
 	}
 
@@ -457,15 +528,15 @@ func ValidateSocketPath(socket string, fldPath *field.Path) field.ErrorList {
 
 	u, err := url.Parse(socket)
 	if err != nil {
-		return append(allErrs, field.Invalid(fldPath, socket, fmt.Sprintf("url parsing error: %v", err)))
+		return append(allErrs, field.Invalid(fldPath, socket, fmt.Sprintf("URL parsing error: %v", err)))
 	}
 
 	if u.Scheme == "" {
 		if !filepath.IsAbs(u.Path) {
 			return append(allErrs, field.Invalid(fldPath, socket, fmt.Sprintf("path is not absolute: %s", socket)))
 		}
-	} else if u.Scheme != kubeadmapiv1beta1.DefaultUrlScheme {
-		return append(allErrs, field.Invalid(fldPath, socket, fmt.Sprintf("url scheme %s is not supported", u.Scheme)))
+	} else if u.Scheme != kubeadmapiv1beta2.DefaultUrlScheme {
+		return append(allErrs, field.Invalid(fldPath, socket, fmt.Sprintf("URL scheme %s is not supported", u.Scheme)))
 	}
 
 	return allErrs

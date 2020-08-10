@@ -20,10 +20,10 @@ import (
 	"fmt"
 	"strings"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"k8s.io/api/core/v1"
-	"k8s.io/kubernetes/pkg/scheduler/cache"
+	framework "k8s.io/kubernetes/pkg/scheduler/framework/v1alpha1"
 	internalcache "k8s.io/kubernetes/pkg/scheduler/internal/cache"
 	"k8s.io/kubernetes/pkg/scheduler/internal/queue"
 )
@@ -43,31 +43,39 @@ func (d *CacheDumper) DumpAll() {
 
 // dumpNodes writes NodeInfo to the scheduler logs.
 func (d *CacheDumper) dumpNodes() {
-	snapshot := d.cache.Snapshot()
+	dump := d.cache.Dump()
 	klog.Info("Dump of cached NodeInfo")
-	for _, nodeInfo := range snapshot.Nodes {
-		klog.Info(printNodeInfo(nodeInfo))
+	for _, nodeInfo := range dump.Nodes {
+		klog.Info(d.printNodeInfo(nodeInfo))
 	}
 }
 
 // dumpSchedulingQueue writes pods in the scheduling queue to the scheduler logs.
 func (d *CacheDumper) dumpSchedulingQueue() {
-	waitingPods := d.podQueue.WaitingPods()
+	pendingPods := d.podQueue.PendingPods()
 	var podData strings.Builder
-	for _, p := range waitingPods {
+	for _, p := range pendingPods {
 		podData.WriteString(printPod(p))
 	}
 	klog.Infof("Dump of scheduling queue:\n%s", podData.String())
 }
 
 // printNodeInfo writes parts of NodeInfo to a string.
-func printNodeInfo(n *cache.NodeInfo) string {
+func (d *CacheDumper) printNodeInfo(n *framework.NodeInfo) string {
 	var nodeData strings.Builder
-	nodeData.WriteString(fmt.Sprintf("\nNode name: %+v\nRequested Resources: %+v\nAllocatable Resources:%+v\nNumber of Pods: %v\nPods:\n",
-		n.Node().Name, n.RequestedResource(), n.AllocatableResource(), len(n.Pods())))
+	nodeData.WriteString(fmt.Sprintf("\nNode name: %+v\nRequested Resources: %+v\nAllocatable Resources:%+v\nScheduled Pods(number: %v):\n",
+		n.Node().Name, n.Requested, n.Allocatable, len(n.Pods)))
 	// Dumping Pod Info
-	for _, p := range n.Pods() {
-		nodeData.WriteString(printPod(p))
+	for _, p := range n.Pods {
+		nodeData.WriteString(printPod(p.Pod))
+	}
+	// Dumping nominated pods info on the node
+	nominatedPods := d.podQueue.NominatedPodsForNode(n.Node().Name)
+	if len(nominatedPods) != 0 {
+		nodeData.WriteString(fmt.Sprintf("Nominated Pods(number: %v):\n", len(nominatedPods)))
+		for _, p := range nominatedPods {
+			nodeData.WriteString(printPod(p))
+		}
 	}
 	return nodeData.String()
 }

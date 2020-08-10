@@ -20,17 +20,17 @@ import (
 	"flag"
 	"os"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	genericapiserver "k8s.io/apiserver/pkg/server"
-	"k8s.io/apiserver/pkg/util/logs"
+	"k8s.io/component-base/logs"
 	"k8s.io/kube-aggregator/pkg/cmd/server"
 
 	// force compilation of packages we'll later rely upon
 	_ "k8s.io/kube-aggregator/pkg/apis/apiregistration/install"
 	_ "k8s.io/kube-aggregator/pkg/apis/apiregistration/validation"
-	_ "k8s.io/kube-aggregator/pkg/client/clientset_generated/internalclientset"
-	_ "k8s.io/kube-aggregator/pkg/client/listers/apiregistration/internalversion"
+	_ "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
+	_ "k8s.io/kube-aggregator/pkg/client/listers/apiregistration/v1"
 	_ "k8s.io/kube-aggregator/pkg/client/listers/apiregistration/v1beta1"
 )
 

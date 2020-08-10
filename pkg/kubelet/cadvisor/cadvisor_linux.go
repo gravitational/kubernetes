@@ -1,4 +1,4 @@
-// +build cgo,linux
+// +build linux
 
 /*
 Copyright 2015 The Kubernetes Authors.
@@ -26,16 +26,28 @@ import (
 	"path"
 	"time"
 
+	// Register supported container handlers.
+	_ "github.com/google/cadvisor/container/containerd/install"
+	_ "github.com/google/cadvisor/container/crio/install"
+	_ "github.com/google/cadvisor/container/systemd/install"
+
+	// Register cloud info providers.
+	// TODO(#68522): Remove this in 1.20+ once the cAdvisor endpoints are removed.
+	_ "github.com/google/cadvisor/utils/cloudinfo/aws"
+	_ "github.com/google/cadvisor/utils/cloudinfo/azure"
+	_ "github.com/google/cadvisor/utils/cloudinfo/gce"
+
 	"github.com/google/cadvisor/cache/memory"
 	cadvisormetrics "github.com/google/cadvisor/container"
 	"github.com/google/cadvisor/events"
 	cadvisorapi "github.com/google/cadvisor/info/v1"
 	cadvisorapiv2 "github.com/google/cadvisor/info/v2"
 	"github.com/google/cadvisor/manager"
-	"github.com/google/cadvisor/metrics"
 	"github.com/google/cadvisor/utils/sysfs"
-	"k8s.io/klog"
-	"k8s.io/kubernetes/pkg/kubelet/types"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/klog/v2"
+	kubefeatures "k8s.io/kubernetes/pkg/features"
+	"k8s.io/utils/pointer"
 )
 
 type cadvisorClient struct {
@@ -72,36 +84,8 @@ func init() {
 	}
 }
 
-func containerLabels(c *cadvisorapi.ContainerInfo) map[string]string {
-	// Prometheus requires that all metrics in the same family have the same labels,
-	// so we arrange to supply blank strings for missing labels
-	var name, image, podName, namespace, containerName string
-	if len(c.Aliases) > 0 {
-		name = c.Aliases[0]
-	}
-	image = c.Spec.Image
-	if v, ok := c.Spec.Labels[types.KubernetesPodNameLabel]; ok {
-		podName = v
-	}
-	if v, ok := c.Spec.Labels[types.KubernetesPodNamespaceLabel]; ok {
-		namespace = v
-	}
-	if v, ok := c.Spec.Labels[types.KubernetesContainerNameLabel]; ok {
-		containerName = v
-	}
-	set := map[string]string{
-		metrics.LabelID:    c.Name,
-		metrics.LabelName:  name,
-		metrics.LabelImage: image,
-		"pod_name":         podName,
-		"namespace":        namespace,
-		"container_name":   containerName,
-	}
-	return set
-}
-
-// New creates a cAdvisor and exports its API on the specified port if port > 0.
-func New(imageFsInfoProvider ImageFsInfoProvider, rootPath string, usingLegacyStats bool) (Interface, error) {
+// New creates a new cAdvisor Interface for linux systems.
+func New(imageFsInfoProvider ImageFsInfoProvider, rootPath string, cgroupRoots []string, usingLegacyStats bool) (Interface, error) {
 	sysFs := sysfs.NewRealSysFs()
 
 	includedMetrics := cadvisormetrics.MetricSet{
@@ -112,15 +96,20 @@ func New(imageFsInfoProvider ImageFsInfoProvider, rootPath string, usingLegacySt
 		cadvisormetrics.NetworkUsageMetrics:     struct{}{},
 		cadvisormetrics.AcceleratorUsageMetrics: struct{}{},
 		cadvisormetrics.AppMetrics:              struct{}{},
+		cadvisormetrics.ProcessMetrics:          struct{}{},
 	}
-	if usingLegacyStats {
+	if usingLegacyStats || utilfeature.DefaultFeatureGate.Enabled(kubefeatures.LocalStorageCapacityIsolation) {
 		includedMetrics[cadvisormetrics.DiskUsageMetrics] = struct{}{}
 	}
 
-	// collect metrics for all cgroups
-	rawContainerCgroupPathPrefixWhiteList := []string{"/"}
-	// Create and start the cAdvisor container manager.
-	m, err := manager.New(memory.New(statsCacheDuration, nil), sysFs, maxHousekeepingInterval, allowDynamicHousekeeping, includedMetrics, http.DefaultClient, rawContainerCgroupPathPrefixWhiteList)
+	duration := maxHousekeepingInterval
+	housekeepingConfig := manager.HouskeepingConfig{
+		Interval:     &duration,
+		AllowDynamic: pointer.BoolPtr(allowDynamicHousekeeping),
+	}
+
+	// Create the cAdvisor container manager.
+	m, err := manager.New(memory.New(statsCacheDuration, nil), sysFs, housekeepingConfig, includedMetrics, http.DefaultClient, cgroupRoots, "")
 	if err != nil {
 		return nil, err
 	}
@@ -135,13 +124,11 @@ func New(imageFsInfoProvider ImageFsInfoProvider, rootPath string, usingLegacySt
 		}
 	}
 
-	cadvisorClient := &cadvisorClient{
+	return &cadvisorClient{
 		imageFsInfoProvider: imageFsInfoProvider,
 		rootPath:            rootPath,
 		Manager:             m,
-	}
-
-	return cadvisorClient, nil
+	}, nil
 }
 
 func (cc *cadvisorClient) Start() error {

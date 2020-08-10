@@ -21,17 +21,14 @@ limitations under the License.
 package main
 
 import (
-	"fmt"
 	"math/rand"
 	"os"
 	"time"
 
-	"k8s.io/apiserver/pkg/util/logs"
+	"k8s.io/component-base/logs"
+	_ "k8s.io/component-base/metrics/prometheus/clientgo" // load all the prometheus client-go plugin
+	_ "k8s.io/component-base/metrics/prometheus/version"  // for version metric registration
 	"k8s.io/kubernetes/cmd/kube-controller-manager/app"
-	_ "k8s.io/kubernetes/pkg/client/metrics/prometheus" // for client metric registration
-	_ "k8s.io/kubernetes/pkg/util/reflector/prometheus" // for reflector metric registration
-	_ "k8s.io/kubernetes/pkg/util/workqueue/prometheus" // for workqueue metric registration
-	_ "k8s.io/kubernetes/pkg/version/prometheus"        // for version metric registration
 )
 
 func main() {
@@ -47,7 +44,6 @@ func main() {
 	defer logs.FlushLogs()
 
 	if err := command.Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
 }

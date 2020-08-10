@@ -31,9 +31,11 @@ import (
 	genericregistry "k8s.io/apiserver/pkg/registry/generic/registry"
 	"k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/server/healthz"
+	"k8s.io/apiserver/pkg/server/options/encryptionconfig"
 	serverstorage "k8s.io/apiserver/pkg/server/storage"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	storagefactory "k8s.io/apiserver/pkg/storage/storagebackend/factory"
+	"k8s.io/klog/v2"
 )
 
 type EtcdOptions struct {
@@ -81,7 +83,7 @@ func (s *EtcdOptions) Validate() []error {
 	}
 
 	allErrors := []error{}
-	if len(s.StorageConfig.ServerList) == 0 {
+	if len(s.StorageConfig.Transport.ServerList) == 0 {
 		allErrors = append(allErrors, fmt.Errorf("--etcd-servers must be specified"))
 	}
 
@@ -148,19 +150,19 @@ func (s *EtcdOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.IntVar(&dummyCacheSize, "deserialization-cache-size", 0, "Number of deserialized json objects to cache in memory.")
 	fs.MarkDeprecated("deserialization-cache-size", "the deserialization cache was dropped in 1.13 with support for etcd2")
 
-	fs.StringSliceVar(&s.StorageConfig.ServerList, "etcd-servers", s.StorageConfig.ServerList,
+	fs.StringSliceVar(&s.StorageConfig.Transport.ServerList, "etcd-servers", s.StorageConfig.Transport.ServerList,
 		"List of etcd servers to connect with (scheme://ip:port), comma separated.")
 
 	fs.StringVar(&s.StorageConfig.Prefix, "etcd-prefix", s.StorageConfig.Prefix,
 		"The prefix to prepend to all resource paths in etcd.")
 
-	fs.StringVar(&s.StorageConfig.KeyFile, "etcd-keyfile", s.StorageConfig.KeyFile,
+	fs.StringVar(&s.StorageConfig.Transport.KeyFile, "etcd-keyfile", s.StorageConfig.Transport.KeyFile,
 		"SSL key file used to secure etcd communication.")
 
-	fs.StringVar(&s.StorageConfig.CertFile, "etcd-certfile", s.StorageConfig.CertFile,
+	fs.StringVar(&s.StorageConfig.Transport.CertFile, "etcd-certfile", s.StorageConfig.Transport.CertFile,
 		"SSL certification file used to secure etcd communication.")
 
-	fs.StringVar(&s.StorageConfig.CAFile, "etcd-cafile", s.StorageConfig.CAFile,
+	fs.StringVar(&s.StorageConfig.Transport.TrustedCAFile, "etcd-cafile", s.StorageConfig.Transport.TrustedCAFile,
 		"SSL Certificate Authority file used to secure etcd communication.")
 
 	fs.StringVar(&s.EncryptionProviderConfigFilepath, "experimental-encryption-provider-config", s.EncryptionProviderConfigFilepath,
@@ -175,6 +177,9 @@ func (s *EtcdOptions) AddFlags(fs *pflag.FlagSet) {
 
 	fs.DurationVar(&s.StorageConfig.CountMetricPollPeriod, "etcd-count-metric-poll-period", s.StorageConfig.CountMetricPollPeriod, ""+
 		"Frequency of polling etcd for number of resources per type. 0 disables the metric collection.")
+
+	fs.DurationVar(&s.StorageConfig.DBMetricPollInterval, "etcd-db-metric-poll-interval", s.StorageConfig.DBMetricPollInterval,
+		"The interval of requests to poll etcd and update metric. 0 disables the metric collection")
 }
 
 func (s *EtcdOptions) ApplyTo(c *server.Config) error {
@@ -201,9 +206,18 @@ func (s *EtcdOptions) addEtcdHealthEndpoint(c *server.Config) error {
 	if err != nil {
 		return err
 	}
-	c.HealthzChecks = append(c.HealthzChecks, healthz.NamedCheck("etcd", func(r *http.Request) error {
+	c.AddHealthChecks(healthz.NamedCheck("etcd", func(r *http.Request) error {
 		return healthCheck()
 	}))
+
+	if s.EncryptionProviderConfigFilepath != "" {
+		kmsPluginHealthzChecks, err := encryptionconfig.GetKMSPluginHealthzCheckers(s.EncryptionProviderConfigFilepath)
+		if err != nil {
+			return err
+		}
+		c.AddHealthChecks(kmsPluginHealthzChecks...)
+	}
+
 	return nil
 }
 
@@ -225,11 +239,15 @@ func (f *SimpleRestOptionsFactory) GetRESTOptions(resource schema.GroupResource)
 		if err != nil {
 			return generic.RESTOptions{}, err
 		}
-		cacheSize, ok := sizes[resource]
-		if !ok {
-			cacheSize = f.Options.DefaultWatchCacheSize
+		size, ok := sizes[resource]
+		if ok && size > 0 {
+			klog.Warningf("Dropping watch-cache-size for %v - watchCache size is now dynamic", resource)
 		}
-		ret.Decorator = genericregistry.StorageWithCacher(cacheSize)
+		if ok && size <= 0 {
+			ret.Decorator = generic.UndecoratedStorage
+		} else {
+			ret.Decorator = genericregistry.StorageWithCacher()
+		}
 	}
 	return ret, nil
 }
@@ -258,11 +276,15 @@ func (f *StorageFactoryRestOptionsFactory) GetRESTOptions(resource schema.GroupR
 		if err != nil {
 			return generic.RESTOptions{}, err
 		}
-		cacheSize, ok := sizes[resource]
-		if !ok {
-			cacheSize = f.Options.DefaultWatchCacheSize
+		size, ok := sizes[resource]
+		if ok && size > 0 {
+			klog.Warningf("Dropping watch-cache-size for %v - watchCache size is now dynamic", resource)
 		}
-		ret.Decorator = genericregistry.StorageWithCacher(cacheSize)
+		if ok && size <= 0 {
+			ret.Decorator = generic.UndecoratedStorage
+		} else {
+			ret.Decorator = genericregistry.StorageWithCacher()
+		}
 	}
 
 	return ret, nil
@@ -285,7 +307,6 @@ func ParseWatchCacheSizes(cacheSizes []string) (map[schema.GroupResource]int, er
 		if size < 0 {
 			return nil, fmt.Errorf("watch cache size cannot be negative: %s", c)
 		}
-
 		watchCacheSizes[schema.ParseGroupResource(tokens[0])] = size
 	}
 	return watchCacheSizes, nil

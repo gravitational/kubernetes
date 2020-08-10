@@ -79,6 +79,8 @@ func allPrimitiveFieldPaths(t *testing.T, tp reflect.Type, path *field.Path) set
 	return paths
 }
 
+//lint:file-ignore U1000 Ignore dummy types, used by tests.
+
 // dummy helper types
 type foo struct {
 	foo int
@@ -138,6 +140,7 @@ var (
 	// KubeletConfiguration fields that do not contain file paths.
 	kubeletConfigurationNonPathFieldPaths = sets.NewString(
 		"Address",
+		"AllowedUnsafeSysctls[*]",
 		"Authentication.Anonymous.Enabled",
 		"Authentication.Webhook.CacheTTL.Duration",
 		"Authentication.Webhook.Enabled",
@@ -148,6 +151,7 @@ var (
 		"CPUCFSQuotaPeriod.Duration",
 		"CPUManagerPolicy",
 		"CPUManagerReconcilePeriod.Duration",
+		"TopologyManagerPolicy",
 		"QOSReserved[*]",
 		"CgroupDriver",
 		"CgroupRoot",
@@ -161,6 +165,8 @@ var (
 		"EnableContentionProfiling",
 		"EnableControllerAttachDetach",
 		"EnableDebuggingHandlers",
+		"EnableServer",
+		"EnableSystemLogHandler",
 		"EnforceNodeAllocatable[*]",
 		"EventBurst",
 		"EventRecordQPS",
@@ -177,6 +183,7 @@ var (
 		"HairpinMode",
 		"HealthzBindAddress",
 		"HealthzPort",
+		"Logging.Format",
 		"TLSCipherSuites[*]",
 		"TLSMinVersion",
 		"IPTablesDropBit",
@@ -184,6 +191,7 @@ var (
 		"ImageGCHighThresholdPercent",
 		"ImageGCLowThresholdPercent",
 		"ImageMinimumGCAge.Duration",
+		"KernelMemcgNotification",
 		"KubeAPIBurst",
 		"KubeAPIQPS",
 		"KubeReservedCgroup",
@@ -196,20 +204,25 @@ var (
 		"StaticPodURLHeader[*][*]",
 		"MaxOpenFiles",
 		"MaxPods",
+		"NodeLeaseDurationSeconds",
+		"NodeStatusMaxImages",
 		"NodeStatusUpdateFrequency.Duration",
 		"NodeStatusReportFrequency.Duration",
-		"NodeLeaseDurationSeconds",
 		"OOMScoreAdj",
 		"PodCIDR",
 		"PodPidsLimit",
 		"PodsPerCore",
 		"Port",
 		"ProtectKernelDefaults",
+		"ProviderID",
 		"ReadOnlyPort",
 		"RegistryBurst",
 		"RegistryPullQPS",
+		"ReservedSystemCPUs",
 		"RuntimeRequestTimeout.Duration",
+		"RunOnce",
 		"SerializeImagePulls",
+		"ShowHiddenMetricsForVersion",
 		"StreamingConnectionIdleTimeout.Duration",
 		"SyncFrequency.Duration",
 		"SystemCgroups",
@@ -218,5 +231,6 @@ var (
 		"TypeMeta.APIVersion",
 		"TypeMeta.Kind",
 		"VolumeStatsAggPeriod.Duration",
+		"VolumePluginDir",
 	)
 )

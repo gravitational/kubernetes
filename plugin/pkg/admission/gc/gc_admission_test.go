@@ -17,12 +17,13 @@ limitations under the License.
 package gc
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	extensionv1beta1 "k8s.io/api/extensions/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -39,7 +40,7 @@ import (
 
 type fakeAuthorizer struct{}
 
-func (fakeAuthorizer) Authorize(a authorizer.Attributes) (authorizer.Decision, string, error) {
+func (fakeAuthorizer) Authorize(ctx context.Context, a authorizer.Attributes) (authorizer.Decision, string, error) {
 	username := a.GetUser().GetName()
 
 	if username == "non-deleter" {
@@ -112,7 +113,7 @@ func newGCPermissionsEnforcement() (*gcPermissionsEnforcement, error) {
 			},
 		},
 		{
-			GroupVersion: extensionv1beta1.SchemeGroupVersion.String(),
+			GroupVersion: appsv1.SchemeGroupVersion.String(),
 			APIResources: []metav1.APIResource{
 				{Name: "daemonsets", Namespaced: true, Kind: "DaemonSet"},
 			},
@@ -302,13 +303,15 @@ func TestGCAdmission(t *testing.T) {
 			}
 
 			operation := admission.Create
+			var options runtime.Object = &metav1.CreateOptions{}
 			if tc.oldObj != nil {
 				operation = admission.Update
+				options = &metav1.UpdateOptions{}
 			}
 			user := &user.DefaultInfo{Name: tc.username}
-			attributes := admission.NewAttributesRecord(tc.newObj, tc.oldObj, schema.GroupVersionKind{}, metav1.NamespaceDefault, "foo", tc.resource, tc.subresource, operation, false, user)
+			attributes := admission.NewAttributesRecord(tc.newObj, tc.oldObj, schema.GroupVersionKind{}, metav1.NamespaceDefault, "foo", tc.resource, tc.subresource, operation, options, false, user)
 
-			err = gcAdmit.Validate(attributes)
+			err = gcAdmit.Validate(context.TODO(), attributes, nil)
 			if !tc.checkError(err) {
 				t.Errorf("unexpected err: %v", err)
 			}
@@ -372,13 +375,13 @@ func TestBlockOwnerDeletionAdmission(t *testing.T) {
 		Name:       "rc2",
 	}
 	blockDS1 := metav1.OwnerReference{
-		APIVersion:         "extensions/v1beta1",
+		APIVersion:         "apps/v1",
 		Kind:               "DaemonSet",
 		Name:               "ds1",
 		BlockOwnerDeletion: getTrueVar(),
 	}
 	notBlockDS1 := metav1.OwnerReference{
-		APIVersion:         "extensions/v1beta1",
+		APIVersion:         "apps/v1",
 		Kind:               "DaemonSet",
 		Name:               "ds1",
 		BlockOwnerDeletion: getFalseVar(),
@@ -605,13 +608,15 @@ func TestBlockOwnerDeletionAdmission(t *testing.T) {
 
 	for _, tc := range tests {
 		operation := admission.Create
+		var options runtime.Object = &metav1.CreateOptions{}
 		if tc.oldObj != nil {
 			operation = admission.Update
+			options = &metav1.UpdateOptions{}
 		}
 		user := &user.DefaultInfo{Name: tc.username}
-		attributes := admission.NewAttributesRecord(tc.newObj, tc.oldObj, schema.GroupVersionKind{}, metav1.NamespaceDefault, "foo", tc.resource, tc.subresource, operation, false, user)
+		attributes := admission.NewAttributesRecord(tc.newObj, tc.oldObj, schema.GroupVersionKind{}, metav1.NamespaceDefault, "foo", tc.resource, tc.subresource, operation, options, false, user)
 
-		err := gcAdmit.Validate(attributes)
+		err := gcAdmit.Validate(context.TODO(), attributes, nil)
 		if !tc.checkError(err) {
 			t.Errorf("%v: unexpected err: %v", tc.name, err)
 		}

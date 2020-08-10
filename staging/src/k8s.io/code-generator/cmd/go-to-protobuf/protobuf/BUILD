@@ -28,13 +28,17 @@ go_library(
         "//vendor/k8s.io/gengo/namer:go_default_library",
         "//vendor/k8s.io/gengo/parser:go_default_library",
         "//vendor/k8s.io/gengo/types:go_default_library",
-        "//vendor/k8s.io/klog:go_default_library",
+        "//vendor/k8s.io/klog/v2:go_default_library",
     ],
 )
 
 go_test(
     name = "go_default_test",
-    srcs = ["namer_test.go"],
+    srcs = [
+        "cmd_test.go",
+        "namer_test.go",
+        "parser_test.go",
+    ],
     embed = [":go_default_library"],
 )
 

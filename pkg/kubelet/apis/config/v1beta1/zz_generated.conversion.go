@@ -26,6 +26,7 @@ import (
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	conversion "k8s.io/apimachinery/pkg/conversion"
 	runtime "k8s.io/apimachinery/pkg/runtime"
+	v1alpha1 "k8s.io/component-base/config/v1alpha1"
 	v1beta1 "k8s.io/kubelet/config/v1beta1"
 	config "k8s.io/kubernetes/pkg/kubelet/apis/config"
 )
@@ -207,6 +208,9 @@ func Convert_config_KubeletAuthorization_To_v1beta1_KubeletAuthorization(in *con
 }
 
 func autoConvert_v1beta1_KubeletConfiguration_To_config_KubeletConfiguration(in *v1beta1.KubeletConfiguration, out *config.KubeletConfiguration, s conversion.Scope) error {
+	if err := v1.Convert_Pointer_bool_To_bool(&in.EnableServer, &out.EnableServer, s); err != nil {
+		return err
+	}
 	out.StaticPodPath = in.StaticPodPath
 	out.SyncFrequency = in.SyncFrequency
 	out.FileCheckFrequency = in.FileCheckFrequency
@@ -270,6 +274,7 @@ func autoConvert_v1beta1_KubeletConfiguration_To_config_KubeletConfiguration(in 
 	out.CgroupDriver = in.CgroupDriver
 	out.CPUManagerPolicy = in.CPUManagerPolicy
 	out.CPUManagerReconcilePeriod = in.CPUManagerReconcilePeriod
+	out.TopologyManagerPolicy = in.TopologyManagerPolicy
 	out.QOSReserved = *(*map[string]string)(unsafe.Pointer(&in.QOSReserved))
 	out.RuntimeRequestTimeout = in.RuntimeRequestTimeout
 	out.HairpinMode = in.HairpinMode
@@ -279,10 +284,14 @@ func autoConvert_v1beta1_KubeletConfiguration_To_config_KubeletConfiguration(in 
 		return err
 	}
 	out.ResolverConfig = in.ResolverConfig
+	out.RunOnce = in.RunOnce
 	if err := v1.Convert_Pointer_bool_To_bool(&in.CPUCFSQuota, &out.CPUCFSQuota, s); err != nil {
 		return err
 	}
 	if err := v1.Convert_Pointer_v1_Duration_To_v1_Duration(&in.CPUCFSQuotaPeriod, &out.CPUCFSQuotaPeriod, s); err != nil {
+		return err
+	}
+	if err := v1.Convert_Pointer_int32_To_int32(&in.NodeStatusMaxImages, &out.NodeStatusMaxImages, s); err != nil {
 		return err
 	}
 	out.MaxOpenFiles = in.MaxOpenFiles
@@ -325,9 +334,21 @@ func autoConvert_v1beta1_KubeletConfiguration_To_config_KubeletConfiguration(in 
 	out.ConfigMapAndSecretChangeDetectionStrategy = config.ResourceChangeDetectionStrategy(in.ConfigMapAndSecretChangeDetectionStrategy)
 	out.SystemReserved = *(*map[string]string)(unsafe.Pointer(&in.SystemReserved))
 	out.KubeReserved = *(*map[string]string)(unsafe.Pointer(&in.KubeReserved))
+	out.ReservedSystemCPUs = in.ReservedSystemCPUs
+	out.ShowHiddenMetricsForVersion = in.ShowHiddenMetricsForVersion
 	out.SystemReservedCgroup = in.SystemReservedCgroup
 	out.KubeReservedCgroup = in.KubeReservedCgroup
 	out.EnforceNodeAllocatable = *(*[]string)(unsafe.Pointer(&in.EnforceNodeAllocatable))
+	out.AllowedUnsafeSysctls = *(*[]string)(unsafe.Pointer(&in.AllowedUnsafeSysctls))
+	out.VolumePluginDir = in.VolumePluginDir
+	out.ProviderID = in.ProviderID
+	out.KernelMemcgNotification = in.KernelMemcgNotification
+	if err := v1alpha1.Convert_v1alpha1_LoggingConfiguration_To_config_LoggingConfiguration(&in.Logging, &out.Logging, s); err != nil {
+		return err
+	}
+	if err := v1.Convert_Pointer_bool_To_bool(&in.EnableSystemLogHandler, &out.EnableSystemLogHandler, s); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -337,6 +358,9 @@ func Convert_v1beta1_KubeletConfiguration_To_config_KubeletConfiguration(in *v1b
 }
 
 func autoConvert_config_KubeletConfiguration_To_v1beta1_KubeletConfiguration(in *config.KubeletConfiguration, out *v1beta1.KubeletConfiguration, s conversion.Scope) error {
+	if err := v1.Convert_bool_To_Pointer_bool(&in.EnableServer, &out.EnableServer, s); err != nil {
+		return err
+	}
 	out.StaticPodPath = in.StaticPodPath
 	out.SyncFrequency = in.SyncFrequency
 	out.FileCheckFrequency = in.FileCheckFrequency
@@ -346,6 +370,8 @@ func autoConvert_config_KubeletConfiguration_To_v1beta1_KubeletConfiguration(in 
 	out.Address = in.Address
 	out.Port = in.Port
 	out.ReadOnlyPort = in.ReadOnlyPort
+	out.VolumePluginDir = in.VolumePluginDir
+	out.ProviderID = in.ProviderID
 	out.TLSCertFile = in.TLSCertFile
 	out.TLSPrivateKeyFile = in.TLSPrivateKeyFile
 	out.TLSCipherSuites = *(*[]string)(unsafe.Pointer(&in.TLSCipherSuites))
@@ -400,6 +426,7 @@ func autoConvert_config_KubeletConfiguration_To_v1beta1_KubeletConfiguration(in 
 	out.CgroupDriver = in.CgroupDriver
 	out.CPUManagerPolicy = in.CPUManagerPolicy
 	out.CPUManagerReconcilePeriod = in.CPUManagerReconcilePeriod
+	out.TopologyManagerPolicy = in.TopologyManagerPolicy
 	out.QOSReserved = *(*map[string]string)(unsafe.Pointer(&in.QOSReserved))
 	out.RuntimeRequestTimeout = in.RuntimeRequestTimeout
 	out.HairpinMode = in.HairpinMode
@@ -409,6 +436,7 @@ func autoConvert_config_KubeletConfiguration_To_v1beta1_KubeletConfiguration(in 
 		return err
 	}
 	out.ResolverConfig = in.ResolverConfig
+	out.RunOnce = in.RunOnce
 	if err := v1.Convert_bool_To_Pointer_bool(&in.CPUCFSQuota, &out.CPUCFSQuota, s); err != nil {
 		return err
 	}
@@ -416,6 +444,9 @@ func autoConvert_config_KubeletConfiguration_To_v1beta1_KubeletConfiguration(in 
 		return err
 	}
 	out.MaxOpenFiles = in.MaxOpenFiles
+	if err := v1.Convert_int32_To_Pointer_int32(&in.NodeStatusMaxImages, &out.NodeStatusMaxImages, s); err != nil {
+		return err
+	}
 	out.ContentType = in.ContentType
 	if err := v1.Convert_int32_To_Pointer_int32(&in.KubeAPIQPS, &out.KubeAPIQPS, s); err != nil {
 		return err
@@ -453,11 +484,21 @@ func autoConvert_config_KubeletConfiguration_To_v1beta1_KubeletConfiguration(in 
 		return err
 	}
 	out.ConfigMapAndSecretChangeDetectionStrategy = v1beta1.ResourceChangeDetectionStrategy(in.ConfigMapAndSecretChangeDetectionStrategy)
+	out.AllowedUnsafeSysctls = *(*[]string)(unsafe.Pointer(&in.AllowedUnsafeSysctls))
+	out.KernelMemcgNotification = in.KernelMemcgNotification
 	out.SystemReserved = *(*map[string]string)(unsafe.Pointer(&in.SystemReserved))
 	out.KubeReserved = *(*map[string]string)(unsafe.Pointer(&in.KubeReserved))
 	out.SystemReservedCgroup = in.SystemReservedCgroup
 	out.KubeReservedCgroup = in.KubeReservedCgroup
 	out.EnforceNodeAllocatable = *(*[]string)(unsafe.Pointer(&in.EnforceNodeAllocatable))
+	out.ReservedSystemCPUs = in.ReservedSystemCPUs
+	out.ShowHiddenMetricsForVersion = in.ShowHiddenMetricsForVersion
+	if err := v1alpha1.Convert_config_LoggingConfiguration_To_v1alpha1_LoggingConfiguration(&in.Logging, &out.Logging, s); err != nil {
+		return err
+	}
+	if err := v1.Convert_bool_To_Pointer_bool(&in.EnableSystemLogHandler, &out.EnableSystemLogHandler, s); err != nil {
+		return err
+	}
 	return nil
 }
 

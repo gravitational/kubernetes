@@ -22,7 +22,7 @@ import (
 	"os"
 	"time"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"github.com/pkg/errors"
 	apps "k8s.io/api/apps/v1"
@@ -75,7 +75,7 @@ func CreateSelfHostedControlPlane(manifestsDir, kubeConfigDir string, cfg *kubea
 		}
 	}
 
-	for _, componentName := range kubeadmconstants.MasterComponents {
+	for _, componentName := range kubeadmconstants.ControlPlaneComponents {
 		start := time.Now()
 		manifestPath := kubeadmconstants.GetStaticPodFilepath(componentName, manifestsDir)
 

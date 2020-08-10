@@ -30,11 +30,12 @@ import (
 
 type netlinkHandle struct {
 	netlink.Handle
+	isIPv6 bool
 }
 
-// NewNetLinkHandle will crate a new NetLinkHandle
-func NewNetLinkHandle() NetLinkHandle {
-	return &netlinkHandle{netlink.Handle{}}
+// NewNetLinkHandle will create a new NetLinkHandle
+func NewNetLinkHandle(isIPv6 bool) NetLinkHandle {
+	return &netlinkHandle{netlink.Handle{}, isIPv6}
 }
 
 // EnsureAddressBind checks if address is bound to the interface and, if not, binds it. If the address is already bound, return true.
@@ -134,7 +135,7 @@ func (h *netlinkHandle) ListBindAddress(devName string) ([]string, error) {
 // 172.17.0.1 dev docker0  scope host  src 172.17.0.1
 // 192.168.122.1 dev virbr0  scope host  src 192.168.122.1
 // Then cut the unique src IP fields,
-// --> result set: [10.0.0.1, 10.0.0.10, 10.0.0.252, 100.106.89.164, 127.0.0.1, 192.168.122.1]
+// --> result set: [10.0.0.1, 10.0.0.10, 10.0.0.252, 100.106.89.164, 127.0.0.1, 172.17.0.1, 192.168.122.1]
 
 // If dev is specified, it's equivalent to exec:
 // $ ip route show table local type local proto kernel dev kube-ipvs0
@@ -181,7 +182,11 @@ func (h *netlinkHandle) GetLocalAddresses(dev, filterDev string) (sets.String, e
 		if route.LinkIndex == filterLinkIndex {
 			continue
 		}
-		if route.Src != nil {
+		if h.isIPv6 {
+			if route.Dst.IP.To4() == nil && !route.Dst.IP.IsLinkLocalUnicast() {
+				res.Insert(route.Dst.IP.String())
+			}
+		} else if route.Src != nil {
 			res.Insert(route.Src.String())
 		}
 	}

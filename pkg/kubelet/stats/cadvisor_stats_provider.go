@@ -23,7 +23,7 @@ import (
 	"strings"
 
 	cadvisorapiv2 "github.com/google/cadvisor/info/v2"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -33,12 +33,15 @@ import (
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/leaky"
 	"k8s.io/kubernetes/pkg/kubelet/server/stats"
+	"k8s.io/kubernetes/pkg/kubelet/status"
 	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
 )
 
 // cadvisorStatsProvider implements the containerStatsProvider interface by
-// getting the container stats from cAdvisor. This is needed by docker and rkt
-// integrations since they do not provide stats from CRI.
+// getting the container stats from cAdvisor. This is needed by
+// integrations which do not provide stats from CRI. See
+// `pkg/kubelet/cadvisor/util.go#UsingLegacyCadvisorStats` for the logic for
+// determining which integrations do not provide stats from CRI.
 type cadvisorStatsProvider struct {
 	// cadvisor is used to get the stats of the cgroup for the containers that
 	// are managed by pods.
@@ -47,6 +50,8 @@ type cadvisorStatsProvider struct {
 	resourceAnalyzer stats.ResourceAnalyzer
 	// imageService is used to get the stats of the image filesystem.
 	imageService kubecontainer.ImageService
+	// statusProvider is used to get pod metadata
+	statusProvider status.PodStatusProvider
 }
 
 // newCadvisorStatsProvider returns a containerStatsProvider that provides
@@ -55,11 +60,13 @@ func newCadvisorStatsProvider(
 	cadvisor cadvisor.Interface,
 	resourceAnalyzer stats.ResourceAnalyzer,
 	imageService kubecontainer.ImageService,
+	statusProvider status.PodStatusProvider,
 ) containerStatsProvider {
 	return &cadvisorStatsProvider{
 		cadvisor:         cadvisor,
 		resourceAnalyzer: resourceAnalyzer,
 		imageService:     imageService,
+		statusProvider:   statusProvider,
 	}
 }
 
@@ -113,8 +120,7 @@ func (p *cadvisorStatsProvider) ListPodStats() ([]statsapi.PodStats, error) {
 		if containerName == leaky.PodInfraContainerName {
 			// Special case for infrastructure container which is hidden from
 			// the user and has network stats.
-			podStats.Network = cadvisorInfoToNetworkStats("pod:"+ref.Namespace+"_"+ref.Name, &cinfo)
-			podStats.StartTime = metav1.NewTime(cinfo.Spec.CreationTime)
+			podStats.Network = cadvisorInfoToNetworkStats(&cinfo)
 		} else {
 			podStats.Containers = append(podStats.Containers, *cadvisorInfoToContainerStats(containerName, &cinfo, &rootFsInfo, &imageFsInfo))
 		}
@@ -129,20 +135,35 @@ func (p *cadvisorStatsProvider) ListPodStats() ([]statsapi.PodStats, error) {
 		if vstats, found := p.resourceAnalyzer.GetPodVolumeStats(podUID); found {
 			ephemeralStats = make([]statsapi.VolumeStats, len(vstats.EphemeralVolumes))
 			copy(ephemeralStats, vstats.EphemeralVolumes)
-			podStats.VolumeStats = append(vstats.EphemeralVolumes, vstats.PersistentVolumes...)
+			podStats.VolumeStats = append(append([]statsapi.VolumeStats{}, vstats.EphemeralVolumes...), vstats.PersistentVolumes...)
 		}
-		podStats.EphemeralStorage = calcEphemeralStorage(podStats.Containers, ephemeralStats, &rootFsInfo)
+		podStats.EphemeralStorage = calcEphemeralStorage(podStats.Containers, ephemeralStats, &rootFsInfo, nil, false)
 		// Lookup the pod-level cgroup's CPU and memory stats
 		podInfo := getCadvisorPodInfoFromPodUID(podUID, allInfos)
 		if podInfo != nil {
 			cpu, memory := cadvisorInfoToCPUandMemoryStats(podInfo)
 			podStats.CPU = cpu
 			podStats.Memory = memory
+			podStats.ProcessStats = cadvisorInfoToProcessStats(podInfo)
 		}
-		result = append(result, *podStats)
+
+		status, found := p.statusProvider.GetPodStatus(podUID)
+		if found && status.StartTime != nil && !status.StartTime.IsZero() {
+			podStats.StartTime = *status.StartTime
+			// only append stats if we were able to get the start time of the pod
+			result = append(result, *podStats)
+		}
 	}
 
 	return result, nil
+}
+
+// ListPodStatsAndUpdateCPUNanoCoreUsage updates the cpu nano core usage for
+// the containers and returns the stats for all the pod-managed containers.
+// For cadvisor, cpu nano core usages are pre-computed and cached, so this
+// function simply calls ListPodStats.
+func (p *cadvisorStatsProvider) ListPodStatsAndUpdateCPUNanoCoreUsage() ([]statsapi.PodStats, error) {
+	return p.ListPodStats()
 }
 
 // ListPodCPUAndMemoryStats returns the cpu and memory stats of all the pod-managed containers.
@@ -205,53 +226,6 @@ func (p *cadvisorStatsProvider) ListPodCPUAndMemoryStats() ([]statsapi.PodStats,
 	}
 
 	return result, nil
-}
-
-func calcEphemeralStorage(containers []statsapi.ContainerStats, volumes []statsapi.VolumeStats, rootFsInfo *cadvisorapiv2.FsInfo) *statsapi.FsStats {
-	result := &statsapi.FsStats{
-		Time:           metav1.NewTime(rootFsInfo.Timestamp),
-		AvailableBytes: &rootFsInfo.Available,
-		CapacityBytes:  &rootFsInfo.Capacity,
-		InodesFree:     rootFsInfo.InodesFree,
-		Inodes:         rootFsInfo.Inodes,
-	}
-	for _, container := range containers {
-		addContainerUsage(result, &container)
-	}
-	for _, volume := range volumes {
-		result.UsedBytes = addUsage(result.UsedBytes, volume.FsStats.UsedBytes)
-		result.InodesUsed = addUsage(result.InodesUsed, volume.InodesUsed)
-		result.Time = maxUpdateTime(&result.Time, &volume.FsStats.Time)
-	}
-	return result
-}
-
-func addContainerUsage(stat *statsapi.FsStats, container *statsapi.ContainerStats) {
-	if rootFs := container.Rootfs; rootFs != nil {
-		stat.Time = maxUpdateTime(&stat.Time, &rootFs.Time)
-		stat.InodesUsed = addUsage(stat.InodesUsed, rootFs.InodesUsed)
-		stat.UsedBytes = addUsage(stat.UsedBytes, rootFs.UsedBytes)
-		if logs := container.Logs; logs != nil {
-			stat.UsedBytes = addUsage(stat.UsedBytes, logs.UsedBytes)
-			stat.Time = maxUpdateTime(&stat.Time, &logs.Time)
-		}
-	}
-}
-
-func maxUpdateTime(first, second *metav1.Time) metav1.Time {
-	if first.Before(second) {
-		return *second
-	}
-	return *first
-}
-func addUsage(first, second *uint64) *uint64 {
-	if first == nil {
-		return second
-	} else if second == nil {
-		return first
-	}
-	total := *first + *second
-	return &total
 }
 
 // ImageFsStats returns the stats of the filesystem for storing images.
@@ -358,16 +332,11 @@ func removeTerminatedContainerInfo(containerInfo map[string]cadvisorapiv2.Contai
 			continue
 		}
 		sort.Sort(ByCreationTime(refs))
-		i := 0
-		for ; i < len(refs); i++ {
+		for i := len(refs) - 1; i >= 0; i-- {
 			if hasMemoryAndCPUInstUsage(&refs[i].cinfo) {
-				// Stops removing when we first see an info with non-zero
-				// CPU/Memory usage.
+				result[refs[i].cgroup] = refs[i].cinfo
 				break
 			}
-		}
-		for ; i < len(refs); i++ {
-			result[refs[i].cgroup] = refs[i].cinfo
 		}
 	}
 	return result

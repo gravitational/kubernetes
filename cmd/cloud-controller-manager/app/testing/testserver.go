@@ -17,6 +17,7 @@ limitations under the License.
 package testing
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -83,7 +84,8 @@ func StartTestServer(t Logger, customFlags []string) (result TestServer, err err
 	if err != nil {
 		return TestServer{}, err
 	}
-	namedFlagSets := s.Flags()
+	all, disabled := app.KnownControllers(), app.ControllersDisabledByDefault.List()
+	namedFlagSets := s.Flags(all, disabled)
 	for _, f := range namedFlagSets.FlagSets {
 		fs.AddFlagSet(f)
 	}
@@ -108,7 +110,7 @@ func StartTestServer(t Logger, customFlags []string) (result TestServer, err err
 		t.Logf("cloud-controller-manager will listen insecurely on port %d...", s.InsecureServing.BindPort)
 	}
 
-	config, err := s.Config()
+	config, err := s.Config(all, disabled)
 	if err != nil {
 		return result, fmt.Errorf("failed to create config from options: %v", err)
 	}
@@ -132,7 +134,7 @@ func StartTestServer(t Logger, customFlags []string) (result TestServer, err err
 		default:
 		}
 
-		result := client.CoreV1().RESTClient().Get().AbsPath("/healthz").Do()
+		result := client.CoreV1().RESTClient().Get().AbsPath("/healthz").Do(context.TODO())
 		status := 0
 		result.StatusCode(&status)
 		if status == 200 {

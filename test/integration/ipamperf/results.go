@@ -28,7 +28,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	cloudprovider "k8s.io/cloud-provider"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/controller/nodeipam/ipam"
 	nodeutil "k8s.io/kubernetes/pkg/controller/util/node"
 )
@@ -105,7 +105,7 @@ func (o *Observer) StartObserving() error {
 func (o *Observer) Results(name string, config *Config) *Results {
 	var (
 		firstAdd       time.Time // earliest time any node was added (first node add)
-		lastAssignment time.Time // latest time any node was assignged CIDR (last node assignment)
+		lastAssignment time.Time // latest time any node was assigned CIDR (last node assignment)
 	)
 	o.wg.Wait()
 	close(o.stopChan) // shutdown the shared informer

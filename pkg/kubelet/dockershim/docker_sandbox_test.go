@@ -1,3 +1,5 @@
+// +build !dockerless
+
 /*
 Copyright 2016 The Kubernetes Authors.
 
@@ -27,7 +29,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
+	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/dockershim/libdocker"
 	"k8s.io/kubernetes/pkg/kubelet/dockershim/network"
@@ -106,7 +108,7 @@ func TestSandboxStatus(t *testing.T) {
 		State:     state,
 		CreatedAt: ct,
 		Metadata:  config.Metadata,
-		Network:   &runtimeapi.PodSandboxNetworkStatus{Ip: podIP},
+		Network:   &runtimeapi.PodSandboxNetworkStatus{Ip: podIP, AdditionalIps: []*runtimeapi.PodIP{}},
 		Linux: &runtimeapi.LinuxPodSandboxStatus{
 			Namespaces: &runtimeapi.Namespace{
 				Options: &runtimeapi.NamespaceOption{
@@ -142,6 +144,7 @@ func TestSandboxStatus(t *testing.T) {
 	require.NoError(t, err)
 	// IP not valid after sandbox stop
 	expected.Network.Ip = ""
+	expected.Network.AdditionalIps = []*runtimeapi.PodIP{}
 	statusResp, err = ds.PodSandboxStatus(getTestCTX(), &runtimeapi.PodSandboxStatusRequest{PodSandboxId: id})
 	require.NoError(t, err)
 	assert.Equal(t, expected, statusResp.Status)
@@ -153,6 +156,19 @@ func TestSandboxStatus(t *testing.T) {
 	assert.Error(t, err, fmt.Sprintf("status of sandbox: %+v", statusResp))
 }
 
+// TestSandboxHasLeastPrivilegesConfig tests that the sandbox is set with no-new-privileges
+// and it uses runtime/default seccomp profile.
+func TestSandboxHasLeastPrivilegesConfig(t *testing.T) {
+	ds, _, _ := newTestDockerService()
+	config := makeSandboxConfig("foo", "bar", "1", 0)
+
+	// test the default
+	createConfig, err := ds.makeSandboxDockerConfig(config, defaultSandboxImage)
+	assert.NoError(t, err)
+	assert.Equal(t, len(createConfig.HostConfig.SecurityOpt), 1, "sandbox should use runtime/default")
+	assert.Equal(t, "no-new-privileges", createConfig.HostConfig.SecurityOpt[0], "no-new-privileges not set")
+}
+
 // TestSandboxStatusAfterRestart tests that retrieving sandbox status returns
 // an IP address even if RunPodSandbox() was not yet called for this pod, as
 // would happen on kubelet restart
@@ -161,14 +177,13 @@ func TestSandboxStatusAfterRestart(t *testing.T) {
 	config := makeSandboxConfig("foo", "bar", "1", 0)
 	r := rand.New(rand.NewSource(0)).Uint32()
 	podIP := fmt.Sprintf("10.%d.%d.%d", byte(r>>16), byte(r>>8), byte(r))
-
 	state := runtimeapi.PodSandboxState_SANDBOX_READY
 	ct := int64(0)
 	expected := &runtimeapi.PodSandboxStatus{
 		State:     state,
 		CreatedAt: ct,
 		Metadata:  config.Metadata,
-		Network:   &runtimeapi.PodSandboxNetworkStatus{Ip: podIP},
+		Network:   &runtimeapi.PodSandboxNetworkStatus{Ip: podIP, AdditionalIps: []*runtimeapi.PodIP{}},
 		Linux: &runtimeapi.LinuxPodSandboxStatus{
 			Namespaces: &runtimeapi.Namespace{
 				Options: &runtimeapi.NamespaceOption{

@@ -21,9 +21,10 @@ import (
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2epod "k8s.io/kubernetes/test/e2e/framework/pod"
 )
 
 // PatchCSIDeployment modifies the CSI driver deployment:
@@ -48,10 +49,6 @@ import (
 //
 // Driver deployments that are different will have to do the patching
 // without this function, or skip patching entirely.
-//
-// TODO (?): the storage.csi.image.version and storage.csi.image.registry
-// settings are ignored. We could patch the image definitions or deprecate
-// those options.
 func PatchCSIDeployment(f *framework.Framework, o PatchCSIOptions, object interface{}) error {
 	rename := o.OldDriverName != "" && o.NewDriverName != "" &&
 		o.OldDriverName != o.NewDriverName
@@ -88,7 +85,7 @@ func PatchCSIDeployment(f *framework.Framework, o PatchCSIOptions, object interf
 			// value.
 			switch container.Name {
 			case o.DriverContainerName:
-				container.Args = append(container.Args, "--drivername="+o.NewDriverName)
+				container.Args = append(container.Args, o.DriverContainerArguments...)
 			case o.ProvisionerContainerName:
 				// Driver name is expected to be the same
 				// as the provisioner here.
@@ -101,7 +98,7 @@ func PatchCSIDeployment(f *framework.Framework, o PatchCSIOptions, object interf
 		patchContainers(spec.Containers)
 		patchVolumes(spec.Volumes)
 		if o.NodeName != "" {
-			spec.NodeName = o.NodeName
+			e2epod.SetNodeSelection(spec, e2epod.NodeSelection{Name: o.NodeName})
 		}
 	}
 
@@ -120,6 +117,22 @@ func PatchCSIDeployment(f *framework.Framework, o PatchCSIOptions, object interf
 			// as the provisioner name here.
 			object.Provisioner = o.NewDriverName
 		}
+	case *storagev1.CSIDriver:
+		if o.NewDriverName != "" {
+			object.Name = o.NewDriverName
+		}
+		if o.PodInfo != nil {
+			object.Spec.PodInfoOnMount = o.PodInfo
+		}
+		if o.StorageCapacity != nil {
+			object.Spec.StorageCapacity = o.StorageCapacity
+		}
+		if o.CanAttach != nil {
+			object.Spec.AttachRequired = o.CanAttach
+		}
+		if o.VolumeLifecycleModes != nil {
+			object.Spec.VolumeLifecycleModes = *o.VolumeLifecycleModes
+		}
 	}
 
 	return nil
@@ -135,13 +148,36 @@ type PatchCSIOptions struct {
 	// in existing fields).
 	NewDriverName string
 	// The name of the container which has the CSI driver binary.
-	// If non-empty, --drivername with the new name will be
-	// appended to the argument list.
+	// If non-empty, DriverContainerArguments are added to argument
+	// list in container with that name.
 	DriverContainerName string
+	// List of arguments to add to container with
+	// DriverContainerName.
+	DriverContainerArguments []string
 	// The name of the container which has the provisioner binary.
 	// If non-empty, --provisioner with new name will be appended
 	// to the argument list.
 	ProvisionerContainerName string
+	// The name of the container which has the snapshotter binary.
+	// If non-empty, --snapshotter with new name will be appended
+	// to the argument list.
+	SnapshotterContainerName string
 	// If non-empty, all pods are forced to run on this node.
 	NodeName string
+	// If not nil, the value to use for the CSIDriver.Spec.PodInfo
+	// field *if* the driver deploys a CSIDriver object. Ignored
+	// otherwise.
+	PodInfo *bool
+	// If not nil, the value to use for the CSIDriver.Spec.CanAttach
+	// field *if* the driver deploys a CSIDriver object. Ignored
+	// otherwise.
+	CanAttach *bool
+	// If not nil, the value to use for the CSIDriver.Spec.StorageCapacity
+	// field *if* the driver deploys a CSIDriver object. Ignored
+	// otherwise.
+	StorageCapacity *bool
+	// If not nil, the value to use for the CSIDriver.Spec.VolumeLifecycleModes
+	// field *if* the driver deploys a CSIDriver object. Ignored
+	// otherwise.
+	VolumeLifecycleModes *[]storagev1.VolumeLifecycleMode
 }

@@ -24,7 +24,7 @@ import (
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 // KubeletAuth implements AuthInterface
@@ -42,6 +42,7 @@ func NewKubeletAuth(authenticator authenticator.Request, authorizerAttributeGett
 	return &KubeletAuth{authenticator, authorizerAttributeGetter, authorizer}
 }
 
+// NewNodeAuthorizerAttributesGetter creates a new authorizer.RequestAttributesGetter for the node.
 func NewNodeAuthorizerAttributesGetter(nodeName types.NodeName) authorizer.RequestAttributesGetter {
 	return nodeAuthorizerAttributesGetter{nodeName: nodeName}
 }

@@ -8,6 +8,8 @@ go_library(
         "hash.go",
         "marshal.go",
         "node.go",
+        "node_js.go",
+        "node_net.go",
         "sql.go",
         "time.go",
         "util.go",

@@ -17,6 +17,8 @@ limitations under the License.
 package cronjob
 
 import (
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -26,18 +28,17 @@ import (
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	utilpointer "k8s.io/utils/pointer"
 )
-
-func boolptr(b bool) *bool { return &b }
 
 func TestGetJobFromTemplate(t *testing.T) {
 	// getJobFromTemplate() needs to take the job template and copy the labels and annotations
 	// and other fields, and add a created-by reference.
 
 	var one int64 = 1
-	var no bool = false
+	var no bool
 
-	sj := batchv1beta1.CronJob{
+	cj := batchv1beta1.CronJob{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "mycronjob",
 			Namespace: "snazzycats",
@@ -73,7 +74,7 @@ func TestGetJobFromTemplate(t *testing.T) {
 	}
 
 	var job *batchv1.Job
-	job, err := getJobFromTemplate(&sj, time.Time{})
+	job, err := getJobFromTemplate(&cj, time.Time{})
 	if err != nil {
 		t.Errorf("Did not expect error: %s", err)
 	}
@@ -132,7 +133,7 @@ func TestGetParentUIDFromJob(t *testing.T) {
 			{
 				Kind:       "CronJob",
 				UID:        types.UID("5ef034e0-1890-11e6-8935-42010af0003e"),
-				Controller: boolptr(true),
+				Controller: utilpointer.BoolPtr(true),
 			},
 		})
 
@@ -156,26 +157,26 @@ func TestGroupJobsByParent(t *testing.T) {
 	ownerReference1 := metav1.OwnerReference{
 		Kind:       "CronJob",
 		UID:        uid1,
-		Controller: boolptr(true),
+		Controller: utilpointer.BoolPtr(true),
 	}
 
 	ownerReference2 := metav1.OwnerReference{
 		Kind:       "CronJob",
 		UID:        uid2,
-		Controller: boolptr(true),
+		Controller: utilpointer.BoolPtr(true),
 	}
 
 	ownerReference3 := metav1.OwnerReference{
 		Kind:       "CronJob",
 		UID:        uid3,
-		Controller: boolptr(true),
+		Controller: utilpointer.BoolPtr(true),
 	}
 
 	{
-		// Case 1: There are no jobs and scheduledJobs
+		// Case 1: There are no jobs and cronJobs
 		js := []batchv1.Job{}
-		jobsBySj := groupJobsByParent(js)
-		if len(jobsBySj) != 0 {
+		jobsByCj := groupJobsByParent(js)
+		if len(jobsByCj) != 0 {
 			t.Errorf("Wrong number of items in map")
 		}
 	}
@@ -255,7 +256,7 @@ func TestGetRecentUnmetScheduleTimes(t *testing.T) {
 		t.Errorf("test setup error: %v", err)
 	}
 
-	sj := batchv1beta1.CronJob{
+	cj := batchv1beta1.CronJob{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "mycronjob",
 			Namespace: metav1.NamespaceDefault,
@@ -270,10 +271,10 @@ func TestGetRecentUnmetScheduleTimes(t *testing.T) {
 	{
 		// Case 1: no known start times, and none needed yet.
 		// Creation time is before T1.
-		sj.ObjectMeta.CreationTimestamp = metav1.Time{Time: T1.Add(-10 * time.Minute)}
+		cj.ObjectMeta.CreationTimestamp = metav1.Time{Time: T1.Add(-10 * time.Minute)}
 		// Current time is more than creation time, but less than T1.
 		now := T1.Add(-7 * time.Minute)
-		times, err := getRecentUnmetScheduleTimes(sj, now)
+		times, err := getRecentUnmetScheduleTimes(cj, now)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -284,10 +285,10 @@ func TestGetRecentUnmetScheduleTimes(t *testing.T) {
 	{
 		// Case 2: no known start times, and one needed.
 		// Creation time is before T1.
-		sj.ObjectMeta.CreationTimestamp = metav1.Time{Time: T1.Add(-10 * time.Minute)}
+		cj.ObjectMeta.CreationTimestamp = metav1.Time{Time: T1.Add(-10 * time.Minute)}
 		// Current time is after T1
 		now := T1.Add(2 * time.Second)
-		times, err := getRecentUnmetScheduleTimes(sj, now)
+		times, err := getRecentUnmetScheduleTimes(cj, now)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -300,12 +301,12 @@ func TestGetRecentUnmetScheduleTimes(t *testing.T) {
 	{
 		// Case 3: known LastScheduleTime, no start needed.
 		// Creation time is before T1.
-		sj.ObjectMeta.CreationTimestamp = metav1.Time{Time: T1.Add(-10 * time.Minute)}
+		cj.ObjectMeta.CreationTimestamp = metav1.Time{Time: T1.Add(-10 * time.Minute)}
 		// Status shows a start at the expected time.
-		sj.Status.LastScheduleTime = &metav1.Time{Time: T1}
+		cj.Status.LastScheduleTime = &metav1.Time{Time: T1}
 		// Current time is after T1
 		now := T1.Add(2 * time.Minute)
-		times, err := getRecentUnmetScheduleTimes(sj, now)
+		times, err := getRecentUnmetScheduleTimes(cj, now)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -316,12 +317,12 @@ func TestGetRecentUnmetScheduleTimes(t *testing.T) {
 	{
 		// Case 4: known LastScheduleTime, a start needed
 		// Creation time is before T1.
-		sj.ObjectMeta.CreationTimestamp = metav1.Time{Time: T1.Add(-10 * time.Minute)}
+		cj.ObjectMeta.CreationTimestamp = metav1.Time{Time: T1.Add(-10 * time.Minute)}
 		// Status shows a start at the expected time.
-		sj.Status.LastScheduleTime = &metav1.Time{Time: T1}
+		cj.Status.LastScheduleTime = &metav1.Time{Time: T1}
 		// Current time is after T1 and after T2
 		now := T2.Add(5 * time.Minute)
-		times, err := getRecentUnmetScheduleTimes(sj, now)
+		times, err := getRecentUnmetScheduleTimes(cj, now)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -333,11 +334,11 @@ func TestGetRecentUnmetScheduleTimes(t *testing.T) {
 	}
 	{
 		// Case 5: known LastScheduleTime, two starts needed
-		sj.ObjectMeta.CreationTimestamp = metav1.Time{Time: T1.Add(-2 * time.Hour)}
-		sj.Status.LastScheduleTime = &metav1.Time{Time: T1.Add(-1 * time.Hour)}
+		cj.ObjectMeta.CreationTimestamp = metav1.Time{Time: T1.Add(-2 * time.Hour)}
+		cj.Status.LastScheduleTime = &metav1.Time{Time: T1.Add(-1 * time.Hour)}
 		// Current time is after T1 and after T2
 		now := T2.Add(5 * time.Minute)
-		times, err := getRecentUnmetScheduleTimes(sj, now)
+		times, err := getRecentUnmetScheduleTimes(cj, now)
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
@@ -354,25 +355,88 @@ func TestGetRecentUnmetScheduleTimes(t *testing.T) {
 	}
 	{
 		// Case 6: now is way way ahead of last start time, and there is no deadline.
-		sj.ObjectMeta.CreationTimestamp = metav1.Time{Time: T1.Add(-2 * time.Hour)}
-		sj.Status.LastScheduleTime = &metav1.Time{Time: T1.Add(-1 * time.Hour)}
+		cj.ObjectMeta.CreationTimestamp = metav1.Time{Time: T1.Add(-2 * time.Hour)}
+		cj.Status.LastScheduleTime = &metav1.Time{Time: T1.Add(-1 * time.Hour)}
 		now := T2.Add(10 * 24 * time.Hour)
-		_, err := getRecentUnmetScheduleTimes(sj, now)
+		_, err := getRecentUnmetScheduleTimes(cj, now)
 		if err == nil {
 			t.Errorf("expected an error")
 		}
 	}
 	{
 		// Case 7: now is way way ahead of last start time, but there is a short deadline.
-		sj.ObjectMeta.CreationTimestamp = metav1.Time{Time: T1.Add(-2 * time.Hour)}
-		sj.Status.LastScheduleTime = &metav1.Time{Time: T1.Add(-1 * time.Hour)}
+		cj.ObjectMeta.CreationTimestamp = metav1.Time{Time: T1.Add(-2 * time.Hour)}
+		cj.Status.LastScheduleTime = &metav1.Time{Time: T1.Add(-1 * time.Hour)}
 		now := T2.Add(10 * 24 * time.Hour)
 		// Deadline is short
 		deadline := int64(2 * 60 * 60)
-		sj.Spec.StartingDeadlineSeconds = &deadline
-		_, err := getRecentUnmetScheduleTimes(sj, now)
+		cj.Spec.StartingDeadlineSeconds = &deadline
+		_, err := getRecentUnmetScheduleTimes(cj, now)
 		if err != nil {
 			t.Errorf("unexpected error")
+		}
+	}
+}
+
+func TestByJobStartTime(t *testing.T) {
+	now := metav1.NewTime(time.Date(2018, time.January, 1, 2, 3, 4, 5, time.UTC))
+	later := metav1.NewTime(time.Date(2019, time.January, 1, 2, 3, 4, 5, time.UTC))
+	aNil := batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "a"},
+		Status:     batchv1.JobStatus{},
+	}
+	bNil := batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "b"},
+		Status:     batchv1.JobStatus{},
+	}
+	aSet := batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "a"},
+		Status:     batchv1.JobStatus{StartTime: &now},
+	}
+	bSet := batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "b"},
+		Status:     batchv1.JobStatus{StartTime: &now},
+	}
+	aSetLater := batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "a"},
+		Status:     batchv1.JobStatus{StartTime: &later},
+	}
+
+	testCases := []struct {
+		name            string
+		input, expected []batchv1.Job
+	}{
+		{
+			name:     "both have nil start times",
+			input:    []batchv1.Job{bNil, aNil},
+			expected: []batchv1.Job{aNil, bNil},
+		},
+		{
+			name:     "only the first has a nil start time",
+			input:    []batchv1.Job{aNil, bSet},
+			expected: []batchv1.Job{bSet, aNil},
+		},
+		{
+			name:     "only the second has a nil start time",
+			input:    []batchv1.Job{aSet, bNil},
+			expected: []batchv1.Job{aSet, bNil},
+		},
+		{
+			name:     "both have non-nil, equal start time",
+			input:    []batchv1.Job{bSet, aSet},
+			expected: []batchv1.Job{aSet, bSet},
+		},
+		{
+			name:     "both have non-nil, different start time",
+			input:    []batchv1.Job{aSetLater, bSet},
+			expected: []batchv1.Job{bSet, aSetLater},
+		},
+	}
+
+	for _, testCase := range testCases {
+		sort.Sort(byJobStartTime(testCase.input))
+		if !reflect.DeepEqual(testCase.input, testCase.expected) {
+			t.Errorf("case: '%s', jobs not sorted as expected", testCase.name)
 		}
 	}
 }

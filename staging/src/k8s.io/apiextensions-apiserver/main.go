@@ -20,11 +20,11 @@ import (
 	"flag"
 	"os"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"k8s.io/apiextensions-apiserver/pkg/cmd/server"
 	genericapiserver "k8s.io/apiserver/pkg/server"
-	"k8s.io/apiserver/pkg/util/logs"
+	"k8s.io/component-base/logs"
 )
 
 func main() {
